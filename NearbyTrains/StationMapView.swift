@@ -231,13 +231,16 @@ final class Coordinator: NSObject, AnnotationInteractionDelegate {
     var confirmedAnnotationManager: PointAnnotationManager?
     var mapView: MapView?
 
-    // Images for train markers — 3 freshness levels × 2 shapes, generated once and reused
-    private lazy var arrowLive:   UIImage = makeArrowImage(color: UIColor(red: 0.906, green: 0.298, blue: 0.235, alpha: 1))
-    private lazy var arrowRecent: UIImage = makeArrowImage(color: UIColor(red: 0.902, green: 0.494, blue: 0.133, alpha: 1))
-    private lazy var arrowStale:  UIImage = makeArrowImage(color: UIColor(red: 0.584, green: 0.647, blue: 0.651, alpha: 1))
-    private lazy var dotLive:     UIImage = makeDotImage(color: UIColor(red: 0.906, green: 0.298, blue: 0.235, alpha: 1))
-    private lazy var dotRecent:   UIImage = makeDotImage(color: UIColor(red: 0.902, green: 0.494, blue: 0.133, alpha: 1))
-    private lazy var dotStale:    UIImage = makeDotImage(color: UIColor(red: 0.584, green: 0.647, blue: 0.651, alpha: 1))
+    // Passenger trains (headcodes 1–2): dark→mid→faded blue for live→recent→stale
+    private lazy var arrowLive:    UIImage = makeArrowImage(color: UIColor(red: 0.0,  green: 0.18, blue: 0.65, alpha: 1))
+    private lazy var arrowRecent:  UIImage = makeArrowImage(color: UIColor(red: 0.20, green: 0.47, blue: 0.85, alpha: 1))
+    private lazy var arrowStale:   UIImage = makeArrowImage(color: UIColor(red: 0.53, green: 0.68, blue: 0.82, alpha: 1))
+    private lazy var dotLive:      UIImage = makeDotImage(color: UIColor(red: 0.0,  green: 0.18, blue: 0.65, alpha: 1))
+    private lazy var dotRecent:    UIImage = makeDotImage(color: UIColor(red: 0.20, green: 0.47, blue: 0.85, alpha: 1))
+    private lazy var dotStale:     UIImage = makeDotImage(color: UIColor(red: 0.53, green: 0.68, blue: 0.82, alpha: 1))
+    // Freight / ECS trains (headcodes 4–9): red
+    private lazy var arrowFreight: UIImage = makeArrowImage(color: UIColor(red: 0.87, green: 0.17, blue: 0.17, alpha: 1))
+    private lazy var dotFreight:   UIImage = makeDotImage(color: UIColor(red: 0.87, green: 0.17, blue: 0.17, alpha: 1))
 
     private func makeArrowImage(color: UIColor) -> UIImage {
         let size = CGSize(width: 20, height: 20)
@@ -349,12 +352,14 @@ final class Coordinator: NSObject, AnnotationInteractionDelegate {
 
     func registerTrainImages(to mapView: MapView) {
         let images: [(UIImage, String)] = [
-            (arrowLive,   "train-arrow-live"),
-            (arrowRecent, "train-arrow-recent"),
-            (arrowStale,  "train-arrow-stale"),
-            (dotLive,     "train-dot-live"),
-            (dotRecent,   "train-dot-recent"),
-            (dotStale,    "train-dot-stale"),
+            (arrowLive,    "train-arrow-live"),
+            (arrowRecent,  "train-arrow-recent"),
+            (arrowStale,   "train-arrow-stale"),
+            (dotLive,      "train-dot-live"),
+            (dotRecent,    "train-dot-recent"),
+            (dotStale,     "train-dot-stale"),
+            (arrowFreight, "train-arrow-freight"),
+            (dotFreight,   "train-dot-freight"),
         ]
         for (image, name) in images {
             try? mapView.mapboxMap.addImage(image, id: name)
@@ -386,16 +391,26 @@ final class Coordinator: NSObject, AnnotationInteractionDelegate {
 
     func syncTrainAnnotations() {
         trainAnnotationManager?.annotations = trains.map { train in
-            let freshness = freshnessTag(train.ageSeconds)
+            let isFreight = train.headcode.first.map { $0 >= "4" && $0 <= "9" } ?? false
             var a = PointAnnotation(
                 id: train.id,
                 coordinate: CLLocationCoordinate2D(latitude: train.lat, longitude: train.lon)
             )
-            if let bearing = train.bearing {
-                a.image = .init(image: arrowImage(for: freshness), name: "train-arrow-\(freshness)")
-                a.iconRotate = bearing
+            if isFreight {
+                if let bearing = train.bearing {
+                    a.image = .init(image: arrowFreight, name: "train-arrow-freight")
+                    a.iconRotate = bearing
+                } else {
+                    a.image = .init(image: dotFreight, name: "train-dot-freight")
+                }
             } else {
-                a.image = .init(image: dotImage(for: freshness), name: "train-dot-\(freshness)")
+                let freshness = freshnessTag(train.ageSeconds)
+                if let bearing = train.bearing {
+                    a.image = .init(image: arrowImage(for: freshness), name: "train-arrow-\(freshness)")
+                    a.iconRotate = bearing
+                } else {
+                    a.image = .init(image: dotImage(for: freshness), name: "train-dot-\(freshness)")
+                }
             }
             return a
         }
@@ -590,10 +605,20 @@ private struct TrainDetailSheet: View {
                 if isLoadingRoute {
                     ProgressView().tint(.secondary)
                 } else if let route {
-                    Text("\(route.origin) → \(route.destination)")
+                    VStack(spacing: 4) {
+                        Text("\(route.origin) → \(route.destination)")
+                            .font(.subheadline)
+                            .foregroundStyle(.secondary)
+                            .multilineTextAlignment(.center)
+                        Link(destination: URL(string: "https://www.realtimetrains.co.uk/search/handler?qsearch=\(train.headcode)")!) {
+                            Label("RTT", systemImage: "arrow.up.right.square")
+                                .font(.caption)
+                        }
+                    }
+                } else if isFreight {
+                    Text("Freight")
                         .font(.subheadline)
                         .foregroundStyle(.secondary)
-                        .multilineTextAlignment(.center)
                 } else {
                     Link(destination: URL(string: "https://www.realtimetrains.co.uk/search/handler?qsearch=\(train.headcode)")!) {
                         Label("Look up on RTT", systemImage: "arrow.up.right.square")
@@ -625,6 +650,10 @@ private struct TrainDetailSheet: View {
             route = try? await trainService.fetchRoute(headcode: train.headcode, lat: train.lat, lon: train.lon)
             isLoadingRoute = false
         }
+    }
+
+    private var isFreight: Bool {
+        train.headcode.first.map { $0 >= "4" && $0 <= "9" } ?? false
     }
 
     private var dragHandle: some View {

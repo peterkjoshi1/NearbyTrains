@@ -62,6 +62,7 @@ import stomp
 
 from berth_lookup import BerthLookup
 from berth_learner import BerthLearner
+import snap_to_rail
 
 # ── Config ──────────────────────────────────────────────────────────────────
 
@@ -84,7 +85,8 @@ RECONNECT_DELAY = 60   # seconds to wait before reconnecting
 positions: dict[str, dict] = {}
 _pos_lock  = threading.Lock()
 
-stats = {"stomp_messages": 0, "ca_msgs": 0, "position_updates": 0, "trust_anchors": 0}
+stats = {"stomp_messages": 0, "ca_msgs": 0, "position_updates": 0, "trust_anchors": 0,
+         "snap_hits": 0, "snap_misses": 0}
 _stats_lock = threading.Lock()
 
 _last_message_time = time.time()   # updated on every STOMP message received
@@ -222,9 +224,10 @@ class Handler(BaseHTTPRequestHandler):
             s = dict(stats)
         self._json({
             **s,
-            "tracked_trains":   total,
+            "tracked_trains":     total,
             "trains_with_coords": with_coords,
-            "learned_berths":   _learner.learned_count if _learner else 0,
+            "learned_berths":     _learner.learned_count if _learner else 0,
+            "rail_segments":      len(snap_to_rail._polylines),
         })
 
     def _train_debug(self, qs: str):
@@ -336,6 +339,14 @@ class CombinedListener(stomp.ConnectionListener):
                             existing.get("lat") is not None and
                             time.time() - existing["timestamp"] < 60)
         if not has_fresh_td:
+            snapped_lat, snapped_lon, snap_dist = snap_to_rail.snap(lat, lon)
+            if snap_dist < snap_to_rail.MAX_SNAP_KM:
+                _debug(f"[TRUST]  {headcode} → snapped {snap_dist*1000:.0f}m onto rail "
+                       f"({snapped_lat:.5f},{snapped_lon:.5f})")
+                lat, lon = snapped_lat, snapped_lon
+                _inc("snap_hits")
+            else:
+                _inc("snap_misses")
             set_position(headcode, "TR", stanox, lat, lon)
             _debug(f"[TRUST]  {headcode} → position set from TRUST ({lat:.4f},{lon:.4f})")
 
@@ -468,6 +479,8 @@ def main():
     lookup = BerthLookup()
     print("[INIT] Loading berth learner …")
     _learner = BerthLearner()
+    print("[INIT] Loading Highland rail geometry …")
+    snap_to_rail.load()
     print("[INIT] Ready.\n")
 
     executor = ThreadPoolExecutor(max_workers=LOOKUP_WORKERS, thread_name_prefix="lookup")
