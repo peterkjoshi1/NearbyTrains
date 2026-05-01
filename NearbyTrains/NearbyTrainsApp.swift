@@ -2,13 +2,16 @@
 //  NearbyTrainsApp.swift
 //  NearbyTrains
 //
-//  Created by peter on 27/04/2026.
-//
 
 import SwiftUI
+import MapboxMaps
 
 @main
 struct NearbyTrainsApp: App {
+    init() {
+        MapboxOptions.accessToken = "YOUR_MAPBOX_TOKEN"
+    }
+
     var body: some Scene {
         WindowGroup {
             ContentView()

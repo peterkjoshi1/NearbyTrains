@@ -6,13 +6,34 @@
 	objectVersion = 77;
 	objects = {
 
+/* Begin PBXBuildFile section */
+		52EAD319A68F4E398BA2E0FC /* MapboxMaps in Frameworks */ = {isa = PBXBuildFile; productRef = C214B0756ADA46258147FDF3 /* MapboxMaps */; };
+/* End PBXBuildFile section */
+
 /* Begin PBXFileReference section */
+		D01EA8402FA3000000000001 /* Secrets.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; name = Secrets.xcconfig; path = Secrets.xcconfig; sourceTree = "<group>"; };
+		D01EA8402FA3000000000002 /* Secrets.xcconfig.example */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; name = Secrets.xcconfig.example; path = Secrets.xcconfig.example; sourceTree = "<group>"; };
 		D01EA76B2F9F87160088CBB5 /* NearbyTrains.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = NearbyTrains.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		D01EA7952F9F8EF50088CBB5 /* newtonmore.gpx */ = {isa = PBXFileReference; lastKnownFileType = text.xml; name = newtonmore.gpx; path = ../../../../../../Desktop/newtonmore.gpx; sourceTree = "<group>"; };
+		D01EA8302FA1018A0088CBB5 /* glasgow.gpx */ = {isa = PBXFileReference; lastKnownFileType = text.xml; name = glasgow.gpx; path = ../../../../../../Desktop/glasgow.gpx; sourceTree = "<group>"; };
 /* End PBXFileReference section */
+
+/* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
+		B3F5E8A9C2D14E7F90B6A812 /* Exceptions for "NearbyTrains" folder in "NearbyTrains" target */ = {
+			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
+			membershipExceptions = (
+				Info.plist,
+			);
+			target = D01EA76A2F9F87160088CBB5 /* NearbyTrains */;
+		};
+/* End PBXFileSystemSynchronizedBuildFileExceptionSet section */
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */
 		D01EA76D2F9F87160088CBB5 /* NearbyTrains */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
+			exceptions = (
+				B3F5E8A9C2D14E7F90B6A812 /* Exceptions for "NearbyTrains" folder in "NearbyTrains" target */,
+			);
 			path = NearbyTrains;
 			sourceTree = "<group>";
 		};
@@ -23,6 +44,7 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				52EAD319A68F4E398BA2E0FC /* MapboxMaps in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -32,6 +54,10 @@
 		D01EA7622F9F87160088CBB5 = {
 			isa = PBXGroup;
 			children = (
+				D01EA8402FA3000000000001 /* Secrets.xcconfig */,
+				D01EA8402FA3000000000002 /* Secrets.xcconfig.example */,
+				D01EA8302FA1018A0088CBB5 /* glasgow.gpx */,
+				D01EA7952F9F8EF50088CBB5 /* newtonmore.gpx */,
 				D01EA76D2F9F87160088CBB5 /* NearbyTrains */,
 				D01EA76C2F9F87160088CBB5 /* Products */,
 			);
@@ -65,6 +91,7 @@
 			);
 			name = NearbyTrains;
 			packageProductDependencies = (
+				C214B0756ADA46258147FDF3 /* MapboxMaps */,
 			);
 			productName = NearbyTrains;
 			productReference = D01EA76B2F9F87160088CBB5 /* NearbyTrains.app */;
@@ -94,6 +121,9 @@
 			);
 			mainGroup = D01EA7622F9F87160088CBB5;
 			minimizedProjectReferenceProxies = 1;
+			packageReferences = (
+				2FF1E895DC1C48DF8E204E16 /* XCRemoteSwiftPackageReference "mapbox-maps-ios" */,
+			);
 			preferredProjectObjectVersion = 77;
 			productRefGroup = D01EA76C2F9F87160088CBB5 /* Products */;
 			projectDirPath = "";
@@ -246,19 +276,17 @@
 		};
 		D01EA77A2F9F87180088CBB5 /* Debug */ = {
 			isa = XCBuildConfiguration;
+			baseConfigurationReference = D01EA8402FA3000000000001 /* Secrets.xcconfig */;
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
 				DEVELOPMENT_ASSET_PATHS = "\"NearbyTrains/Preview Content\"";
+				DEVELOPMENT_TEAM = 5UP2L5UN82;
 				ENABLE_PREVIEWS = YES;
-				GENERATE_INFOPLIST_FILE = YES;
-				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
-				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
-				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
-				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad = "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
-				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPhone = "UIInterfaceOrientationPortrait UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = NearbyTrains/Info.plist;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/Frameworks",
@@ -274,19 +302,17 @@
 		};
 		D01EA77B2F9F87180088CBB5 /* Release */ = {
 			isa = XCBuildConfiguration;
+			baseConfigurationReference = D01EA8402FA3000000000001 /* Secrets.xcconfig */;
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
 				DEVELOPMENT_ASSET_PATHS = "\"NearbyTrains/Preview Content\"";
+				DEVELOPMENT_TEAM = 5UP2L5UN82;
 				ENABLE_PREVIEWS = YES;
-				GENERATE_INFOPLIST_FILE = YES;
-				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
-				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
-				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
-				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad = "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
-				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPhone = "UIInterfaceOrientationPortrait UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = NearbyTrains/Info.plist;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/Frameworks",
@@ -322,6 +348,25 @@
 			defaultConfigurationName = Release;
 		};
 /* End XCConfigurationList section */
+
+/* Begin XCRemoteSwiftPackageReference section */
+		2FF1E895DC1C48DF8E204E16 /* XCRemoteSwiftPackageReference "mapbox-maps-ios" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/mapbox/mapbox-maps-ios.git";
+			requirement = {
+				kind = upToNextMajorVersion;
+				minimumVersion = 11.0.0;
+			};
+		};
+/* End XCRemoteSwiftPackageReference section */
+
+/* Begin XCSwiftPackageProductDependency section */
+		C214B0756ADA46258147FDF3 /* MapboxMaps */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 2FF1E895DC1C48DF8E204E16 /* XCRemoteSwiftPackageReference "mapbox-maps-ios" */;
+			productName = MapboxMaps;
+		};
+/* End XCSwiftPackageProductDependency section */
 	};
 	rootObject = D01EA7632F9F87160088CBB5 /* Project object */;
 }

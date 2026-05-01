@@ -1,0 +1,609 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>NearbyTrains</title>
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+            max-width: 720px;
+            margin: 60px auto;
+            padding: 0 24px;
+            color: #1a1a1a;
+            line-height: 1.6;
+        }
+        h1 { font-size: 2.4rem; font-weight: 700; margin-bottom: 4px; }
+        .tagline { font-size: 1.2rem; color: #555; margin-top: 0; margin-bottom: 40px; }
+        h2 {
+            font-size: 1.05rem; font-weight: 600; color: #c0392b;
+            text-transform: uppercase; letter-spacing: 0.06em;
+            margin-top: 48px; margin-bottom: 6px;
+        }
+        h3 { font-size: 1.15rem; font-weight: 600; margin-top: 32px; margin-bottom: 6px; }
+        h4 { font-size: 1rem; font-weight: 600; margin-top: 24px; margin-bottom: 4px; color: #333; }
+        p { margin-top: 4px; color: #333; }
+        ul { color: #333; padding-left: 20px; }
+        li { margin-bottom: 5px; }
+        .section { border-top: 1px solid #e5e5e5; margin-top: 48px; padding-top: 40px; }
+        .appendix { border-top: 2px dashed #ddd; margin-top: 64px; padding-top: 40px; }
+        .appendix-label {
+            font-size: 0.78rem; font-weight: 600; color: #999;
+            text-transform: uppercase; letter-spacing: 0.08em;
+            margin-bottom: 32px;
+        }
+        .tech { background: #f7f7f7; border-radius: 8px; padding: 20px 24px; margin-top: 16px; }
+        .tech ul { margin: 0; padding-left: 20px; color: #444; }
+        .tech li { margin-bottom: 6px; }
+        code {
+            font-family: "SF Mono", Menlo, monospace; font-size: 0.88em;
+            background: #efefef; padding: 1px 5px; border-radius: 3px;
+        }
+        pre {
+            background: #f3f3f3; border-left: 3px solid #c0392b;
+            padding: 16px 20px; border-radius: 4px; overflow-x: auto; margin: 12px 0 20px;
+        }
+        pre code { background: none; padding: 0; font-size: 0.85em; line-height: 1.5; }
+        .freshness-table { border-collapse: collapse; margin: 16px 0; font-size: 0.92rem; width: 100%; }
+        .freshness-table td { padding: 8px 14px; border-bottom: 1px solid #eee; }
+        .freshness-table td:first-child { width: 14px; }
+        .swatch { display: inline-block; width: 13px; height: 13px; border-radius: 50%; vertical-align: middle; }
+        .diagram { margin: 28px 0 16px; overflow-x: auto; }
+        .diagram svg { display: block; width: 100%; height: auto; min-width: 580px; }
+        .diagram-caption { font-size: 0.82rem; color: #777; margin-top: 8px; }
+        .legend { display: flex; flex-wrap: wrap; gap: 14px; margin-top: 14px; font-size: 0.82rem; color: #555; }
+        .legend-item { display: flex; align-items: center; gap: 6px; }
+        .legend-swatch { width: 13px; height: 13px; border-radius: 3px; flex-shrink: 0; }
+    </style>
+</head>
+<body>
+
+<h1>NearbyTrains</h1>
+<p class="tagline">See which trains are near you, right now.</p>
+
+<p>NearbyTrains shows your nearest Scottish National Rail stations on a live map, with upcoming departures at a tap. Drop a pin anywhere to see which trains will pass that spot in the next hour. Watch trains move in real time with arrows showing their direction of travel.</p>
+
+<!-- ═══════════════════════════════════════════ USER GUIDE -->
+<div class="section">
+    <h2>User guide</h2>
+    <p>These instructions assume you are running on a Mac with Xcode and using the iOS Simulator.</p>
+
+    <h3>One-time setup</h3>
+
+    <h4>Python dependency</h4>
+    <pre><code>pip install stomp.py</code></pre>
+
+    <h4>Network Rail credentials</h4>
+    <p>Register for a free account at <a href="https://publicdatafeeds.networkrail.co.uk">publicdatafeeds.networkrail.co.uk</a>, then create the credentials file:</p>
+    <pre><code>mkdir -p ~/Library/Application\ Support/NearbyTrains
+cp server/credentials.example ~/Library/Application\ Support/NearbyTrains/credentials</code></pre>
+    <p>Edit the file and fill in your Network Rail username and password.</p>
+
+    <h4>API tokens</h4>
+    <p>Copy <code>Secrets.xcconfig.example</code> to <code>Secrets.xcconfig</code> in the project root and fill in:</p>
+    <ul>
+        <li><strong>Mapbox public token</strong> — from <a href="https://account.mapbox.com">account.mapbox.com</a></li>
+        <li><strong>RTT refresh token</strong> — from <a href="https://api-portal.rtt.io">api-portal.rtt.io</a></li>
+    </ul>
+
+    <h3>Starting the server</h3>
+    <p>Open a terminal and run:</p>
+    <pre><code>cd /path/to/NearbyTrains
+python3 server/train_tracker.py</code></pre>
+    <p>Healthy startup output looks like:</p>
+    <pre><code>[LEARN]  Loaded 1,171 learned berth coordinates
+[HTTP]   Listening on http://localhost:8080
+[STOMP]  Connected — subscribed to TD_SE_SIG_AREA, TD_SW_SIG_AREA, TRAIN_MVT_ALL_TOC
+[STATS]  trains=0 (0 located) | STOMP msgs=0 ...</code></pre>
+    <p>Within 30 seconds the stats line should show trains being tracked. To monitor it continuously in a second terminal:</p>
+    <pre><code>watch -n 5 'curl -s http://localhost:8080/trains/stats | python3 -m json.tool'</code></pre>
+    <p>The server must keep running while you use the app. It reconnects automatically if the Network Rail feed drops.</p>
+
+    <h3>Running the app</h3>
+    <ol>
+        <li>Open <code>NearbyTrains.xcodeproj</code> in Xcode</li>
+        <li>Select an iPhone simulator from the device picker (iPhone 15 or later recommended)</li>
+        <li>Press <strong>Cmd+R</strong> to build and run</li>
+        <li>The map opens centred on Scotland. Stations appear as blue dots within a few seconds. Train markers appear once the server has data — allow 30–60 seconds after starting the server for the first positions to arrive.</li>
+    </ol>
+    <p><em>Note: the simulator runs on your Mac and can reach <code>localhost:8080</code> directly. On a physical device, update the IP address in <code>NearbyTrains/TrainPositionService.swift</code> to your Mac's local network IP.</em></p>
+
+    <h3>Using the app</h3>
+
+    <h4>The map</h4>
+    <p>Railway lines are highlighted in red. Blue dots mark stations within range. Train positions update every 10 seconds.</p>
+
+    <h4>Station departures</h4>
+    <p>Tap any blue station dot. A sheet slides up showing the next departures from that station — destination, scheduled time, expected time, and platform if known. The dot turns orange while selected.</p>
+
+    <h4>Live train positions</h4>
+    <p>Trains appear as coloured arrows (direction known) or dots (direction not yet known). Colour indicates how recently the position was updated:</p>
+    <table class="freshness-table">
+        <tr><td><span class="swatch" style="background:#e74c3c"></span></td><td><strong>Red</strong></td><td>Updated in the last 90 seconds</td></tr>
+        <tr><td><span class="swatch" style="background:#e67e22"></span></td><td><strong>Amber</strong></td><td>1 to 5 minutes since last update</td></tr>
+        <tr><td><span class="swatch" style="background:#95a5a6"></span></td><td><strong>Grey</strong></td><td>5 minutes to 1 hour since last update — typically a Highland train between stations</td></tr>
+    </table>
+    <p>Tap a train marker to see its headcode, route (origin → destination), berth, distance, and how long ago it was last seen. If the route cannot be determined automatically — for example, an express that does not stop at nearby stations — a <strong>Look up on RTT</strong> link opens the Real Time Trains website for that service.</p>
+
+    <h4>Passing train forecast</h4>
+    <p>Long-press anywhere on the map (hold for half a second). A red pin drops and a sheet appears listing trains scheduled to pass that point in the next hour, sorted by time. This works by finding the two nearest stations to the pin and fetching their departure boards.</p>
+    <p><em>Limitation: express trains that pass through without stopping at either of the two nearest stations will not appear in the forecast.</em></p>
+
+    <h4>Highland trains</h4>
+    <p>Trains on the Highland Mainline, Far North Line, West Highland Line, Kyle and Oban lines appear as grey dots updated only when the train passes a station — typically every 20 to 40 minutes. This is a data source limitation; see <a href="#coverage">Geographic coverage</a> for the full explanation.</p>
+</div>
+
+<!-- ═══════════════════════════════════════════ WHAT IT DOES -->
+<div class="section">
+    <h2>What it does</h2>
+
+    <h3>Tap a station to see departures</h3>
+    <p>Station locations are loaded from OpenStreetMap and shown as blue dots. Tap one and a sheet slides up showing the next two departures — destination, scheduled time, expected time, and platform if available. The dot turns orange to show it is selected.</p>
+
+    <h3>Drop a pin for a passing train forecast</h3>
+    <p>Long-press anywhere on the map to drop a red pin. The app finds the two nearest stations to that point, fetches all services scheduled in the next hour, deduplicates across both stations, and presents them sorted by time. Useful if you are at a bridge, level crossing, or anywhere along a line.</p>
+    <p><em>Limitation: the forecast is built from timetabled calls at nearby stations. Express trains that pass through without stopping at either of the two nearest stations will not appear, even if they run right past the pin.</em></p>
+
+    <h3>Watch live train positions</h3>
+    <p>Every 10 seconds the app polls a local server connected to Network Rail live data feeds. Each train appears on the map at its current position. Trains with a known direction of travel show as arrows; trains with only one position recorded show as plain dots. Colour indicates freshness:</p>
+
+    <table class="freshness-table">
+        <tr><td><span class="swatch" style="background:#e74c3c"></span></td><td><strong>Red</strong></td><td>Position updated in the last 90 seconds</td></tr>
+        <tr><td><span class="swatch" style="background:#e67e22"></span></td><td><strong>Amber</strong></td><td>1 to 5 minutes since last update</td></tr>
+        <tr><td><span class="swatch" style="background:#95a5a6"></span></td><td><strong>Grey</strong></td><td>5 to 15 minutes since last update</td></tr>
+        <tr><td><span class="swatch" style="background:#95a5a6"></span></td><td><strong>Grey</strong></td><td>5 minutes to 1 hour since last update — typical for Highland trains between stations</td></tr>
+    </table>
+
+    <h3>Railway lines on the map</h3>
+    <p>The Mapbox Streets style contains railway geometry. The app highlights those lines in red so the track layout is clearly visible alongside the live train positions.</p>
+</div>
+
+<!-- ═══════════════════════════════════════════ HOW IT WORKS -->
+<div class="section">
+    <h2>How it works</h2>
+
+    <h4>Train positions are not GPS</h4>
+    <p>The live positions come from the same signalling data that train controllers use — a system called Train Describer, or TD. The track is divided into sections called berths. Every time a train moves from one berth to the next, a message fires. The server receives those messages in real time, typically within two or three seconds of the train moving.</p>
+    <p>The challenge is that berths are a signalling concept, not a geographic one. They have names like <em>ED:L451</em> but no published coordinates. To place a train on a map, the server works through a chain of lookups: first it checks whether the berth is near a known station, then whether that station has a coordinate. For trains near stations this usually resolves quickly. For trains in the middle of a long rural section between stations, there is often nothing to look up — and the train appears stuck at its last known position until it reaches the next resolvable berth.</p>
+
+    <div class="diagram">
+        <svg viewBox="0 0 590 432" xmlns="http://www.w3.org/2000/svg"
+             font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif" font-size="13">
+            <defs>
+                <marker id="arrl1" viewBox="0 0 8 8" refX="7" refY="4"
+                        markerWidth="5" markerHeight="5" orient="auto">
+                    <path d="M0,0 L8,4 L0,8 Z" fill="#999"/>
+                </marker>
+            </defs>
+            <!-- Main flow arrows -->
+            <line x1="240" y1="58" x2="240" y2="78" stroke="#999" stroke-width="1.5" marker-end="url(#arrl1)"/>
+            <line x1="240" y1="136" x2="240" y2="156" stroke="#999" stroke-width="1.5" marker-end="url(#arrl1)"/>
+            <line x1="240" y1="214" x2="240" y2="234" stroke="#999" stroke-width="1.5" marker-end="url(#arrl1)"/>
+            <line x1="240" y1="292" x2="240" y2="330" stroke="#999" stroke-width="1.5" marker-end="url(#arrl1)"/>
+            <line x1="240" y1="370" x2="240" y2="394" stroke="#999" stroke-width="1.5" marker-end="url(#arrl1)"/>
+            <!-- Miss arrows right -->
+            <line x1="370" y1="107" x2="392" y2="107" stroke="#ccc" stroke-width="1.5" marker-end="url(#arrl1)"/>
+            <line x1="370" y1="185" x2="392" y2="185" stroke="#ccc" stroke-width="1.5" marker-end="url(#arrl1)"/>
+            <line x1="370" y1="263" x2="392" y2="263" stroke="#ccc" stroke-width="1.5" marker-end="url(#arrl1)"/>
+            <!-- Fallback rejoins output -->
+            <polyline points="484,306 484,348 370,348" fill="none" stroke="#ccc" stroke-width="1.5" marker-end="url(#arrl1)"/>
+            <text x="379" y="100" fill="#aaa" font-size="10" text-anchor="middle">miss</text>
+            <text x="379" y="178" fill="#aaa" font-size="10" text-anchor="middle">miss</text>
+            <text x="379" y="256" fill="#aaa" font-size="10" text-anchor="middle">miss</text>
+            <!-- INPUT -->
+            <rect x="110" y="22" width="260" height="36" rx="8" fill="#5d7da0"/>
+            <text x="240" y="42" text-anchor="middle" fill="white" font-weight="600">Train moves to a new signal section</text>
+            <text x="240" y="55" text-anchor="middle" fill="rgba(255,255,255,0.85)" font-size="10">e.g. Scotland East, section ED:L451</text>
+            <!-- STEP 1: berth map -->
+            <rect x="110" y="78" width="260" height="58" rx="8" fill="#34495e"/>
+            <text x="240" y="98" text-anchor="middle" fill="white" font-weight="600">Check the berth map</text>
+            <text x="240" y="114" text-anchor="middle" fill="rgba(255,255,255,0.85)" font-size="11">Is this section listed in Network Rail's database?</text>
+            <text x="240" y="128" text-anchor="middle" fill="rgba(255,255,255,0.65)" font-size="10">22,000+ sections catalogued for Scotland</text>
+            <!-- STEP 2: station lookup -->
+            <rect x="110" y="156" width="260" height="58" rx="8" fill="#34495e"/>
+            <text x="240" y="176" text-anchor="middle" fill="white" font-weight="600">Find the nearby station</text>
+            <text x="240" y="192" text-anchor="middle" fill="rgba(255,255,255,0.85)" font-size="11">Converts the section's code to a station name</text>
+            <text x="240" y="206" text-anchor="middle" fill="rgba(255,255,255,0.65)" font-size="10">e.g. 07259 → Edinburgh Waverley</text>
+            <!-- STEP 3: coordinates -->
+            <rect x="110" y="234" width="260" height="58" rx="8" fill="#34495e"/>
+            <text x="240" y="254" text-anchor="middle" fill="white" font-weight="600">Get the map coordinates</text>
+            <text x="240" y="270" text-anchor="middle" fill="rgba(255,255,255,0.85)" font-size="11">Looks up latitude and longitude for that station</text>
+            <text x="240" y="284" text-anchor="middle" fill="rgba(255,255,255,0.65)" font-size="10">from our database, OpenStreetMap, or a learned position</text>
+            <!-- OUTPUT -->
+            <rect x="110" y="330" width="260" height="40" rx="8" fill="#27ae60"/>
+            <text x="240" y="350" text-anchor="middle" fill="white" font-weight="600">Train's arrow moves on the map</text>
+            <text x="240" y="364" text-anchor="middle" fill="rgba(255,255,255,0.85)" font-size="11">position, direction and freshness updated</text>
+            <!-- APP -->
+            <rect x="155" y="394" width="170" height="30" rx="8" fill="#2980b9"/>
+            <text x="240" y="414" text-anchor="middle" fill="white" font-weight="600" font-size="12">App refreshes every 10 s</text>
+            <!-- MISS 1 -->
+            <rect x="392" y="88" width="178" height="38" rx="8" fill="#c0392b" opacity="0.85"/>
+            <text x="481" y="106" text-anchor="middle" fill="white" font-weight="600" font-size="12">No update</text>
+            <text x="481" y="120" text-anchor="middle" fill="rgba(255,255,255,0.9)" font-size="10">section not in the map</text>
+            <!-- MISS 2 -->
+            <rect x="392" y="166" width="178" height="38" rx="8" fill="#e67e22" opacity="0.9"/>
+            <text x="481" y="184" text-anchor="middle" fill="white" font-weight="600" font-size="12">No update</text>
+            <text x="481" y="198" text-anchor="middle" fill="rgba(255,255,255,0.9)" font-size="10">junction or siding, no station</text>
+            <!-- MISS 3: fallback -->
+            <rect x="392" y="244" width="178" height="62" rx="8" fill="#8e44ad" opacity="0.9"/>
+            <text x="481" y="263" text-anchor="middle" fill="white" font-weight="600" font-size="12">Try a fallback</text>
+            <text x="481" y="279" text-anchor="middle" fill="rgba(255,255,255,0.9)" font-size="11">Ask OpenStreetMap online,</text>
+            <text x="481" y="294" text-anchor="middle" fill="rgba(255,255,255,0.9)" font-size="11">or use a learned position</text>
+        </svg>
+    </div>
+    <p class="diagram-caption">How a train gets placed on the map — three lookups, each with a fallback if nothing matches.</p>
+
+    <h4>Learning positions between stations</h4>
+    <p>To fill those gaps the server runs a self-learning system. A second feed called TRUST fires whenever a train passes a known reporting point — typically at a station. By recording the exact wall-clock time a train passed two known locations, the server can estimate where that train was at any moment in between, by assuming it travelled at constant speed between the two points.</p>
+    <p>Every time it makes one of these estimates for a berth that had no coordinates, it stores it. Once it has seen five consistent estimates for the same berth, that position is saved permanently in a local database. The next time a train enters that berth the coordinate is available immediately. The database persists across server restarts, so coverage only grows over time — after a day of normal service, several hundred berths will have learned coordinates.</p>
+    <p><em>Limitation: the estimate assumes straight-line, constant-speed travel between the two bracketing stations. On curved approaches — Glasgow city lines, Edinburgh Waverley throat — the estimated position drifts slightly away from the actual track.</em></p>
+
+    <div class="diagram">
+        <svg viewBox="0 0 520 430" xmlns="http://www.w3.org/2000/svg"
+             font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif" font-size="13">
+            <defs>
+                <marker id="arrl2" viewBox="0 0 8 8" refX="7" refY="4"
+                        markerWidth="5" markerHeight="5" orient="auto">
+                    <path d="M0,0 L8,4 L0,8 Z" fill="#999"/>
+                </marker>
+            </defs>
+            <!-- Step arrows -->
+            <line x1="260" y1="58" x2="260" y2="78" stroke="#999" stroke-width="1.5" marker-end="url(#arrl2)"/>
+            <line x1="260" y1="136" x2="260" y2="156" stroke="#999" stroke-width="1.5" marker-end="url(#arrl2)"/>
+            <line x1="260" y1="214" x2="260" y2="234" stroke="#999" stroke-width="1.5" marker-end="url(#arrl2)"/>
+            <line x1="260" y1="292" x2="260" y2="316" stroke="#999" stroke-width="1.5" marker-end="url(#arrl2)"/>
+            <line x1="260" y1="360" x2="260" y2="380" stroke="#999" stroke-width="1.5" marker-end="url(#arrl2)"/>
+            <!-- STEP 1 -->
+            <rect x="80" y="22" width="360" height="36" rx="8" fill="#5d7da0"/>
+            <text x="260" y="42" text-anchor="middle" fill="white" font-weight="600">A train passes a section with no known position</text>
+            <text x="260" y="55" text-anchor="middle" fill="rgba(255,255,255,0.85)" font-size="10">The section ID is logged with the exact time</text>
+            <!-- STEP 2 -->
+            <rect x="80" y="78" width="360" height="58" rx="8" fill="#34495e"/>
+            <text x="260" y="98" text-anchor="middle" fill="white" font-weight="600">The same train was also seen at nearby stations</text>
+            <text x="260" y="114" text-anchor="middle" fill="rgba(255,255,255,0.85)" font-size="11">A separate feed (TRUST) fires at each reporting point</text>
+            <text x="260" y="128" text-anchor="middle" fill="rgba(255,255,255,0.65)" font-size="10">giving us: station name, map coordinates, exact time</text>
+            <!-- STEP 3 -->
+            <rect x="80" y="156" width="360" height="58" rx="8" fill="#34495e"/>
+            <text x="260" y="176" text-anchor="middle" fill="white" font-weight="600">The section fell between two of those station reports</text>
+            <text x="260" y="192" text-anchor="middle" fill="rgba(255,255,255,0.85)" font-size="11">One station before it, one station after — same train</text>
+            <text x="260" y="206" text-anchor="middle" fill="rgba(255,255,255,0.65)" font-size="10">window must be within 30 minutes</text>
+            <!-- STEP 4 -->
+            <rect x="80" y="234" width="360" height="58" rx="8" fill="#34495e"/>
+            <text x="260" y="254" text-anchor="middle" fill="white" font-weight="600">Position estimated by proportional timing</text>
+            <text x="260" y="270" text-anchor="middle" fill="rgba(255,255,255,0.85)" font-size="11">If the section was reached halfway through the journey</text>
+            <text x="260" y="284" text-anchor="middle" fill="rgba(255,255,255,0.65)" font-size="10">in time, it's plotted halfway along the straight line</text>
+            <!-- STEP 5 -->
+            <rect x="80" y="316" width="360" height="44" rx="8" fill="#8e44ad" opacity="0.9"/>
+            <text x="260" y="336" text-anchor="middle" fill="white" font-weight="600">Stored in the database straight away — always</text>
+            <text x="260" y="351" text-anchor="middle" fill="rgba(255,255,255,0.9)" font-size="11">every estimate is kept from the very first one,</text>
+            <text x="260" y="363" text-anchor="middle" fill="rgba(255,255,255,0.75)" font-size="10">contributing to a running average</text>
+            <!-- STEP 6 -->
+            <rect x="80" y="380" width="360" height="36" rx="8" fill="#27ae60"/>
+            <text x="260" y="400" text-anchor="middle" fill="white" font-weight="600">Once 5 estimates exist, the position goes live</text>
+            <text x="260" y="412" text-anchor="middle" fill="rgba(255,255,255,0.85)" font-size="10">the averaged coordinate is used as a fallback for all future trains</text>
+        </svg>
+    </div>
+    <p class="diagram-caption">How the server learns a position for a signal section it has never seen before — each estimate is saved immediately, but 5 are needed before the result is trusted for live use.</p>
+
+    <h4>Server and app</h4>
+    <p>A Python server runs locally, maintains the STOMP connections to Network Rail, resolves positions, and exposes a simple REST API on port 8080. The iOS app polls <code>/trains</code> every 10 seconds and updates the map. Station departure data comes from the Real Time Trains API directly from the app.</p>
+</div>
+
+<!-- ═══════════════════════════════════════════ DATA FEEDS -->
+<div class="section">
+    <h2>Data feeds</h2>
+
+    <h3>Network Rail TD STOMP feed</h3>
+    <p>The server subscribes to <code>TD_SE_SIG_AREA</code> (Scotland East) and <code>TD_SW_SIG_AREA</code> (Scotland West) on the Network Rail Open Data STOMP broker. Each message is a JSON array of Train Describer events. The server uses <code>CA_MSG</code> (berth step) events, which fire every time a train moves from one signalling berth to the next.</p>
+    <pre><code>[{
+  "CA_MSG": {
+    "area_id": "ED",
+    "descr":   "2N53",
+    "from":    "L451",
+    "to":      "L453",
+    "time":    "1745920800000"
+  }
+}]</code></pre>
+    <p><code>descr</code> is the headcode. <code>area_id</code> identifies the Train Describer area. <code>to</code> is the berth the train has just entered. Timestamp is milliseconds since epoch.</p>
+
+    <h3>Network Rail TRUST STOMP feed</h3>
+    <p>On the same STOMP connection, the server also subscribes to <code>TRAIN_MVT_ALL_TOC</code>. TRUST fires a <code>TRAIN_MOVEMENT</code> event every time a train passes a reporting point. Events are filtered to Scottish STANOX prefixes (03–09). TRUST events serve as geographic anchors for the berth learner.</p>
+    <pre><code>{
+  "header": { "msg_type": "0003" },
+  "body": {
+    "train_id":         "881D42ME29",
+    "loc_stanox":       "07259",
+    "actual_timestamp": "1745921340000"
+  }
+}</code></pre>
+    <p>Headcode is extracted from <code>train_id[2:6]</code>. The STANOX is resolved to a lat/lon via CORPUS and the coordinate cache, then stored as a timed anchor for that headcode.</p>
+
+    <h3>SMART data</h3>
+    <p>SMART (Sectional Map of Allocated Reporting Timetable) maps berth steps to STANOX location codes. Loaded at startup from <code>smart_data.json</code>. Contains 22,333 Scottish berth entries. For each CA_MSG berth step, SMART provides the corresponding STANOX (if known).</p>
+
+    <h3>CORPUS data</h3>
+    <p>CORPUS maps STANOX codes to CRS station codes. Loaded at startup from <code>corpus_data.json</code> (3,128 mappings). Once a STANOX resolves to a CRS, coordinates can be looked up from the coordinate cache.</p>
+
+    <h3>Coordinate cache</h3>
+    <p>A persisted JSON file (<code>coord_cache.json</code>) maps CRS codes to WGS-84 coordinates, populated on demand by Overpass API queries. Seeded at startup with static coordinates for key Scottish stations.</p>
+
+    <h3>RTT API</h3>
+    <p>Station departure boards come from the Real Time Trains API. The app exchanges a refresh token for a short-lived access token, then queries <code>/gb-nr/location?code={CRS}</code> for each selected station.</p>
+
+    <h3>OpenStreetMap</h3>
+    <p>Station coordinates are fetched via the Overpass API, querying for nodes tagged <code>railway=station</code> with a <code>ref:crs</code> tag within a bounding box around the user's location.</p>
+</div>
+
+<!-- ═══════════════════════════════════════════ COVERAGE -->
+<div class="section" id="coverage">
+    <h2>Geographic coverage</h2>
+
+    <h3>Central belt — live continuous tracking</h3>
+    <p>The Scottish central belt and East Coast corridor are covered by Network Rail's TD STOMP feed. The server subscribes to <code>TD_SE_SIG_AREA</code> and <code>TD_SW_SIG_AREA</code>, which carry berth-step messages for TD areas EA, EB, EC, ED, G1, G2, YO, SM and others. This covers:</p>
+    <ul>
+        <li>Edinburgh and surroundings — all suburban lines, Waverley, Haymarket</li>
+        <li>Glasgow and surroundings — Queen Street, Central, all suburban lines</li>
+        <li>East Coast corridor — Dunbar north through Dundee to Aberdeen</li>
+        <li>Cross-country — Stirling, Falkirk, Fife, Dunblane, Perth</li>
+    </ul>
+    <p>On these lines trains generate a berth-step message every few seconds as they move, giving near-real-time positions.</p>
+
+    <h3>Highland and remote lines — no TD coverage</h3>
+    <p>The following routes carry <strong>no TD berth data</strong> in the public Network Rail feed:</p>
+    <ul>
+        <li><strong>Highland Mainline</strong> — Stirling → Perth → Aviemore → Inverness</li>
+        <li><strong>Far North Line</strong> — Inverness → Dingwall → Tain → Wick and Thurso</li>
+        <li><strong>West Highland Line</strong> — Glasgow → Crianlarich → Fort William → Mallaig</li>
+        <li><strong>Kyle of Lochalsh Line</strong> — Dingwall → Kyle</li>
+        <li><strong>Oban branch</strong> — Crianlarich → Oban</li>
+    </ul>
+    <p>These lines use <strong>RETB (Radio Electronic Token Block)</strong> signalling — a radio-based single-line token system designed for remote routes with light traffic. RETB does not generate track circuit berth messages, so there is nothing for the TD system to publish. The TD area codes for these routes exist in Network Rail's SMART reference data (areas IH, IN, IR, CV, AD) but do not appear in any public STOMP topic, including the combined <code>TD_ALL_SIG_AREA</code> feed.</p>
+    <p><em>A note on apparent Highland sightings: early in development some Glasgow-area berths showed positions in the Highlands — Thurso, Caithness — due to headcode reuse. The same four-character headcode is sometimes reused for different services in geographically distant areas on the same day. This caused coordinates from the Far North Line to be incorrectly learned against Glasgow berths. The server now detects these jumps (>100 km between successive position fixes for the same headcode) and discards the contaminated data.</em></p>
+
+    <h3>Planned: TRUST snapshot positions for Highland trains</h3>
+    <p>The TRUST feed (<code>TRAIN_MVT_ALL_TOC</code>) does cover Highland trains — it fires a movement event whenever a train passes a timing point, typically a station. The server already receives these events and uses them to help the berth learner in the central belt.</p>
+    <p>The planned next step is to use TRUST events <em>directly</em> to place Highland trains on the map. A train would appear at Stirling, then Perth, then Pitlochry, then Aviemore, updating each time it passes a timing point. The position would not move smoothly between stations — but it would show the correct last-reported location, which is far more useful than nothing.</p>
+</div>
+
+<!-- ═══════════════════════════════════════════ LIMITATIONS -->
+<div class="section">
+    <h2>Known limitations</h2>
+
+    <h3>Train positions are signalling berths, not GPS</h3>
+    <p>The Train Describer system was designed for signallers, not passengers. Position is inferred from which berth a train occupies. Long stretches between significant berths have no position updates — trains appear stuck at their last resolved berth until they reach the next one. The <code>age_seconds</code> field in the API indicates staleness; the app hides trains silent for more than 15 minutes.</p>
+
+    <h3>Planned improvements</h3>
+    <p><strong>TRUST-based Highland tracking:</strong> Use TRUST timing-point events to show Highland trains at their last reported station, even without TD berth coverage. See the Coverage section above.</p>
+    <p><strong>Snap-to-rail:</strong> Interpolated and SMART-derived berth coordinates are point estimates, not constrained to the actual track geometry. Pre-downloading Scottish railway geometry from OSM and projecting positions onto the nearest line segment would improve accuracy on curved sections.</p>
+    <p><strong>VectorLinks:</strong> Network Rail VectorLinks provides actual track geometry as linestrings. Combined with timetable data, a train's position could be interpolated along the real curve based on elapsed time, making trains appear to move smoothly between known positions.</p>
+    <p><strong>Community berth maps:</strong> The List of Train Describers wiki has user-contributed berth maps for Scottish TD areas. Incorporating these would immediately improve SMART coverage for berths not in the official dataset.</p>
+</div>
+
+<!-- ═══════════════════════════════════════════ TECHNICAL -->
+<div class="section">
+    <h2>Technical</h2>
+    <div class="tech">
+        <ul>
+            <li>SwiftUI iOS app (iOS 17+), <code>@Observable</code>, <code>UIViewRepresentable</code> wrapping Mapbox Maps SDK v11</li>
+            <li>Python server (<code>train_tracker.py</code>) — single STOMP connection to Network Rail Open Data, handling TD (Scotland E+W) and TRUST (national) feeds via one <code>CombinedListener</code></li>
+            <li>Position chain: SMART (22,333 berths) → CORPUS (3,128 STANOX→CRS) → coordinate cache (JSON, Overpass-populated) → berth learner</li>
+            <li>Berth learner (<code>berth_learner.py</code>) — SQLite-backed self-populating coordinate database; linear time interpolation between TRUST anchors; 5-observation convergence threshold</li>
+            <li>Reconnection: exponential backoff (60 s → 30 min cap); heartbeats every 10 s to prevent broker TTL drops; AMQ339009 session-wait handling</li>
+            <li>Station departures from RTT API; nearby stations from OpenStreetMap Overpass API</li>
+            <li>REST API on port 8080: <code>/trains</code>, <code>/trains/stats</code>, <code>/trains/debug</code></li>
+            <li>Bearing calculated server-side from consecutive berth positions; rendered as rotatable arrow annotations on the map</li>
+        </ul>
+    </div>
+</div>
+
+<!-- ═══════════════════════════════════════════ APPENDIX -->
+<div class="appendix">
+    <p class="appendix-label">Appendix</p>
+
+    <h2>A — Position resolution pipeline</h2>
+    <p>For every CA_MSG berth step the server attempts to resolve a lat/lon coordinate through a chain of data sources, falling back at each miss.</p>
+
+    <div class="diagram">
+        <svg viewBox="0 0 640 510" xmlns="http://www.w3.org/2000/svg"
+             font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif" font-size="12">
+            <defs>
+                <marker id="arr-a" viewBox="0 0 8 8" refX="7" refY="4"
+                        markerWidth="5" markerHeight="5" orient="auto">
+                    <path d="M0,0 L8,4 L0,8 Z" fill="#999"/>
+                </marker>
+            </defs>
+
+            <!-- Main vertical arrows -->
+            <line x1="250" y1="66" x2="250" y2="110" stroke="#999" stroke-width="1.5" marker-end="url(#arr-a)"/>
+            <line x1="250" y1="164" x2="250" y2="208" stroke="#999" stroke-width="1.5" marker-end="url(#arr-a)"/>
+            <line x1="250" y1="262" x2="250" y2="306" stroke="#999" stroke-width="1.5" marker-end="url(#arr-a)"/>
+            <line x1="250" y1="360" x2="250" y2="420" stroke="#999" stroke-width="1.5" marker-end="url(#arr-a)"/>
+            <line x1="250" y1="456" x2="250" y2="490" stroke="#999" stroke-width="1.5" marker-end="url(#arr-a)"/>
+
+            <!-- Arrow labels on main flow -->
+            <text x="262" y="92" fill="#888" font-size="10">STANOX</text>
+            <text x="262" y="188" fill="#888" font-size="10">CRS code</text>
+            <text x="262" y="284" fill="#888" font-size="10">lat, lon</text>
+
+            <!-- Miss arrows -->
+            <line x1="340" y1="137" x2="410" y2="137" stroke="#bbb" stroke-width="1.5" marker-end="url(#arr-a)"/>
+            <line x1="340" y1="235" x2="410" y2="235" stroke="#bbb" stroke-width="1.5" marker-end="url(#arr-a)"/>
+            <line x1="340" y1="333" x2="410" y2="333" stroke="#bbb" stroke-width="1.5" marker-end="url(#arr-a)"/>
+            <!-- Overpass → Learner -->
+            <line x1="500" y1="368" x2="500" y2="398" stroke="#bbb" stroke-width="1.5" marker-end="url(#arr-a)"/>
+            <!-- Learner → set_position -->
+            <polyline points="410,432 380,432 380,438 340,438" fill="none" stroke="#bbb" stroke-width="1.5" marker-end="url(#arr-a)"/>
+
+            <!-- Miss labels -->
+            <text x="372" y="129" fill="#aaa" font-size="10" text-anchor="middle">miss</text>
+            <text x="372" y="227" fill="#aaa" font-size="10" text-anchor="middle">miss</text>
+            <text x="372" y="325" fill="#aaa" font-size="10" text-anchor="middle">miss</text>
+            <text x="520" y="388" fill="#aaa" font-size="10">miss</text>
+
+            <!-- BOX: CA_MSG -->
+            <rect x="130" y="30" width="240" height="36" rx="6" fill="#7f8c8d"/>
+            <text x="250" y="50" text-anchor="middle" fill="white" font-weight="600" font-size="12">CA_MSG berth step</text>
+            <text x="250" y="63" text-anchor="middle" fill="rgba(255,255,255,0.85)" font-size="10">area_id · berth_id · timestamp</text>
+
+            <!-- BOX: SMART -->
+            <rect x="130" y="110" width="210" height="54" rx="6" fill="#2c3e50"/>
+            <text x="235" y="130" text-anchor="middle" fill="white" font-weight="600" font-size="12">SMART index</text>
+            <text x="235" y="145" text-anchor="middle" fill="rgba(255,255,255,0.8)" font-size="10">22,333 Scottish berths</text>
+            <text x="235" y="158" text-anchor="middle" fill="rgba(255,255,255,0.7)" font-size="10">(area, berth) → STANOX</text>
+
+            <!-- BOX: CORPUS -->
+            <rect x="130" y="208" width="210" height="54" rx="6" fill="#2c3e50"/>
+            <text x="235" y="228" text-anchor="middle" fill="white" font-weight="600" font-size="12">CORPUS index</text>
+            <text x="235" y="243" text-anchor="middle" fill="rgba(255,255,255,0.8)" font-size="10">3,128 entries</text>
+            <text x="235" y="256" text-anchor="middle" fill="rgba(255,255,255,0.7)" font-size="10">STANOX → CRS station code</text>
+
+            <!-- BOX: coord cache -->
+            <rect x="130" y="306" width="210" height="54" rx="6" fill="#2c3e50"/>
+            <text x="235" y="326" text-anchor="middle" fill="white" font-weight="600" font-size="12">Coordinate cache</text>
+            <text x="235" y="341" text-anchor="middle" fill="rgba(255,255,255,0.8)" font-size="10">coord_cache.json · 1,300+ CRS</text>
+            <text x="235" y="354" text-anchor="middle" fill="rgba(255,255,255,0.7)" font-size="10">CRS → (lat, lon)</text>
+
+            <!-- BOX: set_position -->
+            <rect x="130" y="420" width="210" height="36" rx="6" fill="#2c3e50"/>
+            <text x="235" y="439" text-anchor="middle" fill="white" font-weight="600" font-size="12">set_position</text>
+            <text x="235" y="452" text-anchor="middle" fill="rgba(255,255,255,0.8)" font-size="10">headcode → lat, lon, bearing, ts</text>
+
+            <!-- BOX: /trains API -->
+            <rect x="155" y="490" width="160" height="14" rx="4" fill="#2980b9"/>
+            <text x="235" y="501" text-anchor="middle" fill="white" font-size="10" font-weight="600">/trains → iOS app</text>
+
+            <!-- RIGHT: SMART miss -->
+            <rect x="410" y="119" width="150" height="36" rx="6" fill="#c0392b" opacity="0.8"/>
+            <text x="485" y="136" text-anchor="middle" fill="white" font-size="11" font-weight="600">skip</text>
+            <text x="485" y="149" text-anchor="middle" fill="rgba(255,255,255,0.9)" font-size="10">berth not in SMART</text>
+
+            <!-- RIGHT: CORPUS miss -->
+            <rect x="410" y="217" width="150" height="36" rx="6" fill="#e67e22" opacity="0.9"/>
+            <text x="485" y="234" text-anchor="middle" fill="white" font-size="11" font-weight="600">no CRS</text>
+            <text x="485" y="247" text-anchor="middle" fill="rgba(255,255,255,0.9)" font-size="10">junction or siding</text>
+
+            <!-- RIGHT: Overpass -->
+            <rect x="410" y="315" width="150" height="53" rx="6" fill="#e67e22" opacity="0.9"/>
+            <text x="485" y="333" text-anchor="middle" fill="white" font-size="11" font-weight="600">Overpass API</text>
+            <text x="485" y="347" text-anchor="middle" fill="rgba(255,255,255,0.9)" font-size="10">live HTTP query</text>
+            <text x="485" y="360" text-anchor="middle" fill="rgba(255,255,255,0.75)" font-size="10">throttled · cached on hit</text>
+
+            <!-- RIGHT: Learner -->
+            <rect x="410" y="398" width="150" height="53" rx="6" fill="#8e44ad" opacity="0.9"/>
+            <text x="485" y="416" text-anchor="middle" fill="white" font-size="11" font-weight="600">Learner cache</text>
+            <text x="485" y="430" text-anchor="middle" fill="rgba(255,255,255,0.9)" font-size="10">berth_learned.db</text>
+            <text x="485" y="443" text-anchor="middle" fill="rgba(255,255,255,0.75)" font-size="10">obs_count ≥ 5</text>
+        </svg>
+    </div>
+    <p class="diagram-caption">Figure A — position resolution chain for each CA_MSG berth step. Fallbacks proceed right on miss.</p>
+
+    <div class="legend">
+        <div class="legend-item"><div class="legend-swatch" style="background:#2c3e50"></div> Reference data lookup</div>
+        <div class="legend-item"><div class="legend-swatch" style="background:#e67e22"></div> External / on-demand</div>
+        <div class="legend-item"><div class="legend-swatch" style="background:#8e44ad"></div> Learner database (SQLite)</div>
+        <div class="legend-item"><div class="legend-swatch" style="background:#c0392b; opacity:0.8"></div> Miss — no update</div>
+    </div>
+
+    <!-- ─── Appendix B ─── -->
+    <h2 style="margin-top:56px;">B — Berth learner architecture</h2>
+    <p>How the server learns coordinates for berths that have no published position, using pairs of TRUST timing events to bracket TD berth steps and interpolate a location.</p>
+
+    <div class="diagram">
+        <svg viewBox="0 0 640 500" xmlns="http://www.w3.org/2000/svg"
+             font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif" font-size="12">
+            <defs>
+                <marker id="arr-b" viewBox="0 0 8 8" refX="7" refY="4"
+                        markerWidth="5" markerHeight="5" orient="auto">
+                    <path d="M0,0 L8,4 L0,8 Z" fill="#999"/>
+                </marker>
+            </defs>
+
+            <!-- TD STOMP → _pending -->
+            <line x1="120" y1="66" x2="120" y2="130" stroke="#999" stroke-width="1.5" marker-end="url(#arr-b)"/>
+            <text x="134" y="100" fill="#888" font-size="10">CA_MSG</text>
+
+            <!-- TRUST STOMP → STANOX lookup -->
+            <line x1="520" y1="66" x2="430" y2="96" stroke="#999" stroke-width="1.5" marker-end="url(#arr-b)"/>
+            <text x="498" y="78" fill="#888" font-size="10" text-anchor="middle">MOVEMENT</text>
+
+            <!-- STANOX lookup → _anchors -->
+            <line x1="470" y1="142" x2="500" y2="200" stroke="#999" stroke-width="1.5" marker-end="url(#arr-b)"/>
+            <text x="512" y="174" fill="#888" font-size="10">lat, lon</text>
+
+            <!-- _pending → interpolate -->
+            <polyline points="120,184 120,278 220,298" fill="none" stroke="#999" stroke-width="1.5" marker-end="url(#arr-b)"/>
+            <text x="44" y="226" fill="#888" font-size="10" text-anchor="middle">step +</text>
+            <text x="44" y="239" fill="#888" font-size="10" text-anchor="middle">timestamp</text>
+
+            <!-- _anchors → interpolate -->
+            <polyline points="500,254 500,278 420,298" fill="none" stroke="#999" stroke-width="1.5" marker-end="url(#arr-b)"/>
+            <text x="572" y="266" fill="#888" font-size="10" text-anchor="middle">location +</text>
+            <text x="572" y="279" fill="#888" font-size="10" text-anchor="middle">timestamp</text>
+
+            <!-- interpolate → SQLite -->
+            <line x1="320" y1="330" x2="320" y2="364" stroke="#999" stroke-width="1.5" marker-end="url(#arr-b)"/>
+            <text x="334" y="350" fill="#888" font-size="10">interpolated coord</text>
+
+            <!-- SQLite → _cache -->
+            <line x1="320" y1="430" x2="320" y2="462" stroke="#999" stroke-width="1.5" marker-end="url(#arr-b)"/>
+            <text x="334" y="449" fill="#888" font-size="10">obs_count ≥ 5</text>
+
+            <!-- BOX: TD STOMP -->
+            <rect x="35" y="30" width="170" height="36" rx="6" fill="#2980b9"/>
+            <text x="120" y="50" text-anchor="middle" fill="white" font-weight="600" font-size="12">TD STOMP feed</text>
+            <text x="120" y="63" text-anchor="middle" fill="rgba(255,255,255,0.85)" font-size="10">Scotland E + W</text>
+
+            <!-- BOX: TRUST STOMP -->
+            <rect x="435" y="30" width="170" height="36" rx="6" fill="#2980b9"/>
+            <text x="520" y="50" text-anchor="middle" fill="white" font-weight="600" font-size="12">TRUST STOMP feed</text>
+            <text x="520" y="63" text-anchor="middle" fill="rgba(255,255,255,0.85)" font-size="10">TRAIN_MVT_ALL_TOC</text>
+
+            <!-- BOX: _pending -->
+            <rect x="35" y="130" width="170" height="54" rx="6" fill="#27ae60"/>
+            <text x="120" y="150" text-anchor="middle" fill="white" font-weight="600" font-size="12">_pending</text>
+            <text x="120" y="165" text-anchor="middle" fill="rgba(255,255,255,0.85)" font-size="10">unmatched berth steps</text>
+            <text x="120" y="178" text-anchor="middle" fill="rgba(255,255,255,0.75)" font-size="10">max 50 per headcode</text>
+
+            <!-- BOX: STANOX lookup -->
+            <rect x="300" y="96" width="170" height="46" rx="6" fill="#7f8c8d"/>
+            <text x="385" y="115" text-anchor="middle" fill="white" font-weight="600" font-size="12">STANOX → lat/lon</text>
+            <text x="385" y="130" text-anchor="middle" fill="rgba(255,255,255,0.85)" font-size="10">CORPUS + coord_cache</text>
+            <text x="385" y="141" text-anchor="middle" fill="rgba(255,255,255,0.75)" font-size="10">resolves anchor location</text>
+
+            <!-- BOX: _anchors -->
+            <rect x="435" y="200" width="170" height="54" rx="6" fill="#27ae60"/>
+            <text x="520" y="220" text-anchor="middle" fill="white" font-weight="600" font-size="12">_anchors</text>
+            <text x="520" y="235" text-anchor="middle" fill="rgba(255,255,255,0.85)" font-size="10">recent TRUST fixes</text>
+            <text x="520" y="248" text-anchor="middle" fill="rgba(255,255,255,0.75)" font-size="10">max 20 per headcode</text>
+
+            <!-- BOX: interpolate -->
+            <rect x="185" y="298" width="270" height="32" rx="6" fill="#2c3e50"/>
+            <text x="320" y="315" text-anchor="middle" fill="white" font-weight="600" font-size="12">bracket + interpolate</text>
+            <text x="320" y="327" text-anchor="middle" fill="rgba(255,255,255,0.8)" font-size="10">linear interpolation between bracketing anchors</text>
+
+            <!-- BOX: SQLite -->
+            <rect x="155" y="364" width="330" height="66" rx="6" fill="#8e44ad"/>
+            <text x="320" y="384" text-anchor="middle" fill="white" font-weight="600" font-size="12">SQLite · berth_learned.db</text>
+            <text x="320" y="399" text-anchor="middle" fill="rgba(255,255,255,0.85)" font-size="10">berth_observations — one row per interpolated event</text>
+            <text x="320" y="413" text-anchor="middle" fill="rgba(255,255,255,0.85)" font-size="10">berth_coords — mean position + obs_count per berth</text>
+            <text x="320" y="427" text-anchor="middle" fill="rgba(255,255,255,0.7)" font-size="10">persists across restarts</text>
+
+            <!-- BOX: _cache -->
+            <rect x="210" y="462" width="220" height="32" rx="6" fill="#27ae60"/>
+            <text x="320" y="479" text-anchor="middle" fill="white" font-weight="600" font-size="12">_cache</text>
+            <text x="320" y="491" text-anchor="middle" fill="rgba(255,255,255,0.85)" font-size="10">in-memory fallback · used in position chain</text>
+        </svg>
+    </div>
+    <p class="diagram-caption">Figure B — berth learner data flow. Both feeds feed into the interpolation step; results accumulate in SQLite until converged.</p>
+
+    <div class="legend">
+        <div class="legend-item"><div class="legend-swatch" style="background:#2980b9"></div> External STOMP feed</div>
+        <div class="legend-item"><div class="legend-swatch" style="background:#27ae60"></div> In-memory state</div>
+        <div class="legend-item"><div class="legend-swatch" style="background:#7f8c8d"></div> Reference data</div>
+        <div class="legend-item"><div class="legend-swatch" style="background:#2c3e50"></div> Processing</div>
+        <div class="legend-item"><div class="legend-swatch" style="background:#8e44ad"></div> SQLite database</div>
+    </div>
+</div>
+
+</body>
+</html>
