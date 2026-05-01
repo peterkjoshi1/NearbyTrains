@@ -17,6 +17,7 @@ import urllib.request
 
 CACHE_FILE = pathlib.Path(__file__).parent / "highland_rail.json"
 MAX_SNAP_KM = 2.0   # ignore snap if nearest rail is further than this
+MIN_SNAP_KM = 0.15  # ignore snap if already within this distance (avoids wrong parallel-track selection)
 
 # Bounding box: covers all Scottish railway lines tracked by this server —
 # Highland Mainline, Far North Line, Kyle Line, West Highland Line, and
@@ -109,7 +110,7 @@ def snap(lat: float, lon: float) -> tuple[float, float, float]:
                 best_dist = d
                 best_lat, best_lon = s_lat, s_lon
 
-    if best_dist > MAX_SNAP_KM:
+    if best_dist > MAX_SNAP_KM or best_dist < MIN_SNAP_KM:
         return lat, lon, math.inf
 
     return best_lat, best_lon, best_dist
