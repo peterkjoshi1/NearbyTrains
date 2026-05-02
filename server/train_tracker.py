@@ -18,6 +18,7 @@ API:
     GET /trains/stats
 """
 
+import collections
 import json
 import math
 import os
@@ -89,6 +90,10 @@ stats = {"stomp_messages": 0, "ca_msgs": 0, "position_updates": 0, "trust_anchor
          "snap_hits": 0}
 _stats_lock = threading.Lock()
 
+# Rolling log of significant snap corrections (>150 m), newest first
+_snap_log: collections.deque = collections.deque(maxlen=200)
+_snap_log_lock = threading.Lock()
+
 _last_message_time = time.time()   # updated on every STOMP message received
 WATCHDOG_TIMEOUT = 120             # reconnect if silent for this many seconds
 _learner: "BerthLearner | None" = None  # set in main()
@@ -102,7 +107,8 @@ def _inc(key: str, n: int = 1):
 # ── Position store ────────────────────────────────────────────────────────────
 
 def set_position(headcode: str, area_id: str, berth: str,
-                 lat: float | None, lon: float | None) -> None:
+                 lat: float | None, lon: float | None,
+                 source: str = "unknown") -> None:
     with _pos_lock:
         prev = positions.get(headcode)
         now = time.time()
@@ -126,11 +132,25 @@ def set_position(headcode: str, area_id: str, berth: str,
             brg = prev.get("bearing")
             speed_kmh = prev.get("speed_kmh")
         if lat is not None:
+            raw_lat, raw_lon = lat, lon
             snapped_lat, snapped_lon, snap_dist = snap_to_rail.snap(lat, lon)
             if snap_dist < snap_to_rail.MAX_SNAP_KM:  # inf when no snap needed/possible
                 _debug(f"[SNAP]   {headcode} {area_id}:{berth} snapped {snap_dist*1000:.0f}m onto rail")
                 lat, lon = snapped_lat, snapped_lon
                 _inc("snap_hits")
+                with _snap_log_lock:
+                    _snap_log.appendleft({
+                        "headcode":    headcode,
+                        "area":        area_id,
+                        "berth":       berth,
+                        "source":      source,
+                        "raw_lat":     raw_lat,
+                        "raw_lon":     raw_lon,
+                        "snapped_lat": lat,
+                        "snapped_lon": lon,
+                        "distance_m":  round(snap_dist * 1000),
+                        "timestamp":   now,
+                    })
         positions[headcode] = {
             "lat": lat,
             "lon": lon,
@@ -206,6 +226,12 @@ class Handler(BaseHTTPRequestHandler):
             self._trains(parsed.query)
         elif parsed.path == "/trains/stats":
             self._train_stats()
+        elif parsed.path == "/trains/snap_log":
+            self._snap_log()
+        elif parsed.path == "/trains/skip_log":
+            self._skip_log()
+        elif parsed.path == "/trains/berth_observations":
+            self._berth_observations(parsed.query)
         elif parsed.path == "/trains/debug":
             self._train_debug(parsed.query)
         else:
@@ -235,6 +261,22 @@ class Handler(BaseHTTPRequestHandler):
             "learned_berths":     _learner.learned_count if _learner else 0,
             "rail_segments":      len(snap_to_rail._polylines),
         })
+
+    def _snap_log(self):
+        with _snap_log_lock:
+            self._json(list(_snap_log))
+
+    def _skip_log(self):
+        self._json(_learner.skip_list() if _learner else [])
+
+    def _berth_observations(self, qs: str):
+        params = urllib.parse.parse_qs(qs)
+        area  = params.get("area",  [None])[0]
+        berth = params.get("berth", [None])[0]
+        if not area or not berth or not _learner:
+            self.send_error(400, "Required params: area, berth")
+            return
+        self._json(_learner.observations_for(area, berth))
 
     def _train_debug(self, qs: str):
         params = urllib.parse.parse_qs(qs)
@@ -345,18 +387,18 @@ class CombinedListener(stomp.ConnectionListener):
                             existing.get("lat") is not None and
                             time.time() - existing["timestamp"] < 60)
         if not has_fresh_td:
-            set_position(headcode, "TR", stanox, lat, lon)
+            set_position(headcode, "TR", stanox, lat, lon, source="trust")
             _debug(f"[TRUST]  {headcode} → position set from TRUST ({lat:.4f},{lon:.4f})")
 
     def _resolve(self, headcode: str, area_id: str, berth: str):
         loc = self.lookup.lookup(area_id, berth)
         if loc is not None and loc.lat is not None:
-            set_position(headcode, area_id, berth, loc.lat, loc.lon)
+            set_position(headcode, area_id, berth, loc.lat, loc.lon, source="corpus")
             return
         learned = self.learner.lookup(area_id, berth)
         if learned is not None:
             lat, lon = learned
-            set_position(headcode, area_id, berth, lat, lon)
+            set_position(headcode, area_id, berth, lat, lon, source="learned")
 
     def on_error(self, frame):
         body = frame.body or ""

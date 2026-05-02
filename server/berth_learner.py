@@ -81,6 +81,8 @@ class BerthLearner:
         # In-memory lookup cache: (area_id, berth_id) → (lat, lon)
         self._cache: dict[tuple, tuple] = {}
         self._load_cache()
+        # Skip tracking: (area_id, berth_id) → {count, last_headcode, last_ts, reason}
+        self._skips: dict[tuple, dict] = {}
 
     # ── Public API ────────────────────────────────────────────────────────────
 
@@ -126,8 +128,10 @@ class BerthLearner:
         """Attempt to interpolate a coordinate for a berth step given a list of anchors."""
         import time as _time
         def _fmt(ts): return _time.strftime("%H:%M:%S", _time.localtime(ts))
+        key = (area_id, berth_id)
         if len(anchors) < 2:
             _debug(f"[INTERP] {headcode} {area_id}:{berth_id} step={_fmt(timestamp)} — only {len(anchors)} anchor(s), skipping")
+            self._record_skip(key, headcode, timestamp, "few_anchors")
             return
         before = after = None
         for a in anchors:
@@ -143,9 +147,11 @@ class BerthLearner:
                    f"(before={'none' if before is None else _fmt(before[0])}, "
                    f"after={'none' if after is None else _fmt(after[0])}) "
                    f"anchors={anchor_times}")
+            self._record_skip(key, headcode, timestamp, "no_bracket")
             return
         window = after[0] - before[0]
         if window <= 0 or window > MAX_WINDOW_SECONDS:
+            self._record_skip(key, headcode, timestamp, "window_too_wide")
             return
         frac = (timestamp - before[0]) / window
         lat  = before[1] + frac * (after[1] - before[1])
@@ -184,6 +190,42 @@ class BerthLearner:
                             for ts, area, berth in self._pending.get(hc, [])]
                 out[hc] = {"anchors": anchors, "pending": pending}
         return out
+
+    def _record_skip(self, key: tuple, headcode: str, ts: float, reason: str) -> None:
+        entry = self._skips.get(key)
+        if entry is None:
+            self._skips[key] = {"count": 1, "last_headcode": headcode,
+                                 "last_ts": ts, "reason": reason}
+        else:
+            entry["count"] += 1
+            entry["last_headcode"] = headcode
+            entry["last_ts"] = ts
+            entry["reason"] = reason
+
+    def observations_for(self, area_id: str, berth_id: str) -> list[dict]:
+        """Return all raw observations for a berth from the DB."""
+        rows = self._db.execute(
+            "SELECT lat, lon, observed_at FROM berth_observations "
+            "WHERE area_id=? AND berth_id=? ORDER BY observed_at",
+            (area_id.upper(), berth_id.upper())
+        ).fetchall()
+        return [{"lat": r[0], "lon": r[1], "observed_at": r[2]} for r in rows]
+
+    def skip_list(self, min_count: int = 3) -> list[dict]:
+        """Return berths with repeated skip count >= min_count, sorted by count desc."""
+        result = []
+        for (area_id, berth_id), entry in self._skips.items():
+            if entry["count"] >= min_count:
+                result.append({
+                    "area":          area_id,
+                    "berth":         berth_id,
+                    "count":         entry["count"],
+                    "last_headcode": entry["last_headcode"],
+                    "last_ts":       entry["last_ts"],
+                    "reason":        entry["reason"],
+                    "in_cache":      (area_id, berth_id) in self._cache,
+                })
+        return sorted(result, key=lambda x: x["count"], reverse=True)
 
     # ── Database ──────────────────────────────────────────────────────────────
 

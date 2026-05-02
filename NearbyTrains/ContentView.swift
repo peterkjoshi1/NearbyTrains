@@ -62,6 +62,9 @@ struct ContentView: View {
 
             StationMapView(viewModel: viewModel)
                 .tabItem { Label("Map", systemImage: "map") }
+
+            DebugView()
+                .tabItem { Label("Debug", systemImage: "ant") }
         }
         .task {
             await viewModel.load()

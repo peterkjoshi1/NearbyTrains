@@ -9,6 +9,8 @@ import CoreLocation
 @Observable
 @MainActor
 final class TrainPositionService {
+    static let serverBase = "http://192.168.1.102:8080"
+
     var trains: [LiveTrain] = []
 
     private var centre: CLLocationCoordinate2D?
@@ -38,7 +40,7 @@ final class TrainPositionService {
 
     private func fetch() async {
         guard let centre else { return }
-        let urlString = "http://192.168.1.102:8080/trains?lat=\(centre.latitude)&lon=\(centre.longitude)&radius=300"
+        let urlString = "\(Self.serverBase)/trains?lat=\(centre.latitude)&lon=\(centre.longitude)&radius=300"
         guard let url = URL(string: urlString) else { return }
         do {
             let (data, _) = try await URLSession.shared.data(from: url)
