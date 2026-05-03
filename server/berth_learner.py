@@ -87,7 +87,7 @@ class BerthLearner:
     # ── Public API ────────────────────────────────────────────────────────────
 
     def add_anchor(self, headcode: str, timestamp: float,
-                   lat: float, lon: float) -> None:
+                   lat: float, lon: float, stanox: str = "") -> None:
         """Record a TRUST position fix and retrospectively bracket any pending berth steps."""
         with self._lock:
             existing = list(self._anchors[headcode])
@@ -100,7 +100,7 @@ class BerthLearner:
                           f"— deque cleared, headcode reuse suspected")
                     self._anchors[headcode].clear()
                     self._pending[headcode].clear()
-            self._anchors[headcode].append((timestamp, lat, lon))
+            self._anchors[headcode].append((timestamp, lat, lon, stanox))
             pending = list(self._pending.get(headcode, []))
             anchors = list(self._anchors[headcode])
 
@@ -153,12 +153,27 @@ class BerthLearner:
         if window <= 0 or window > MAX_WINDOW_SECONDS:
             self._record_skip(key, headcode, timestamp, "window_too_wide")
             return
-        frac = (timestamp - before[0]) / window
-        lat  = before[1] + frac * (after[1] - before[1])
-        lon  = before[2] + frac * (after[2] - before[2])
+        frac      = (timestamp - before[0]) / window
+        lat       = before[1] + frac * (after[1] - before[1])
+        lon       = before[2] + frac * (after[2] - before[2])
+        dt_before = timestamp - before[0]
+        dt_after  = after[0] - timestamp
+        # Weight = 1/dt_before_min + 1/dt_after_min
+        # Linear inverse of minutes to nearest TRUST anchor on each side.
+        # High when berth step fires close to either anchor (position well-constrained).
+        dt_before_min = max(dt_before / 60.0, 1.0 / 60.0)
+        dt_after_min  = max(dt_after  / 60.0, 1.0 / 60.0)
+        weight = 1.0 / dt_before_min + 1.0 / dt_after_min
+        anc_b_lat, anc_b_lon = before[1], before[2]
+        anc_a_lat, anc_a_lon = after[1],  after[2]
+        anc_b_stanox = before[3] if len(before) > 3 else ""
+        anc_a_stanox = after[3]  if len(after)  > 3 else ""
         threading.Thread(
             target=self._record,
-            args=(area_id, berth_id, lat, lon, None, int(timestamp)),
+            args=(area_id, berth_id, lat, lon, None, int(timestamp),
+                  weight, 3, dt_before, dt_after,
+                  anc_b_lat, anc_b_lon, anc_b_stanox,
+                  anc_a_lat, anc_a_lon, anc_a_stanox),
             daemon=True,
             name="learner-write",
         ).start()
@@ -202,14 +217,84 @@ class BerthLearner:
             entry["last_ts"] = ts
             entry["reason"] = reason
 
+    def recalc_weights(self) -> dict:
+        """Recompute weights for all berths using IRLS (iterative reweighted least squares).
+
+        Observations near the converged centroid get high weight; outliers get low weight.
+        Runs for every berth that has any observation with weight=1.0 (legacy/uncomputed).
+        Returns stats.
+        """
+        rows = self._db.execute(
+            "SELECT DISTINCT area_id, berth_id FROM berth_observations WHERE weight = 1.0"
+        ).fetchall()
+
+        updated = 0
+        for area_id, berth_id in rows:
+            obs = self._db.execute(
+                "SELECT rowid, lat, lon FROM berth_observations WHERE area_id=? AND berth_id=?",
+                (area_id, berth_id)
+            ).fetchall()
+            if len(obs) < 2:
+                continue
+            lats = [r[1] for r in obs]
+            lons = [r[2] for r in obs]
+            weights = self._irls_weights(lats, lons)
+            with self._lock:
+                for i, row in enumerate(obs):
+                    self._db.execute(
+                        "UPDATE berth_observations SET weight=? WHERE rowid=?",
+                        (weights[i], row[0])
+                    )
+                self._db.commit()
+                self._recompute(area_id, berth_id)
+            updated += 1
+
+        print(f"[LEARN]  recalc_weights: updated {updated} / {len(rows)} berths")
+        return {"berths_updated": updated, "total_berths": len(rows)}
+
+    def _irls_weights(self, lats: list[float], lons: list[float],
+                      iterations: int = 5, epsilon_m: float = 50.0) -> list[float]:
+        """Return IRLS weights: high near centroid, low for outliers. Normalised to max=1."""
+        lat_m = 111_320.0
+        c_lat = sum(lats) / len(lats)
+        c_lon = sum(lons) / len(lons)
+        weights = [1.0] * len(lats)
+        for _ in range(iterations):
+            lon_m = 111_320.0 * math.cos(math.radians(c_lat))
+            dists = [
+                math.sqrt((lats[i] - c_lat) ** 2 * lat_m ** 2 +
+                          (lons[i] - c_lon) ** 2 * lon_m ** 2)
+                for i in range(len(lats))
+            ]
+            weights = [1.0 / (d ** 2 + epsilon_m) for d in dists]
+            total_w = sum(weights)
+            c_lat = sum(lats[i] * weights[i] for i in range(len(lats))) / total_w
+            c_lon = sum(lons[i] * weights[i] for i in range(len(lons))) / total_w
+        max_w = max(weights)
+        return [w / max_w for w in weights]
+
     def observations_for(self, area_id: str, berth_id: str) -> list[dict]:
         """Return all raw observations for a berth from the DB."""
         rows = self._db.execute(
-            "SELECT lat, lon, observed_at FROM berth_observations "
+            "SELECT lat, lon, observed_at, weight, weight_version, dt_before, dt_after, "
+            "anc_before_lat, anc_before_lon, anc_before_stanox, "
+            "anc_after_lat, anc_after_lon, anc_after_stanox "
+            "FROM berth_observations "
             "WHERE area_id=? AND berth_id=? ORDER BY observed_at",
             (area_id.upper(), berth_id.upper())
         ).fetchall()
-        return [{"lat": r[0], "lon": r[1], "observed_at": r[2]} for r in rows]
+        return [{"lat": r[0], "lon": r[1], "observed_at": r[2], "weight": r[3],
+                 "weight_version": r[4], "dt_before": r[5], "dt_after": r[6],
+                 "anc_before_lat": r[7], "anc_before_lon": r[8], "anc_before_stanox": r[9],
+                 "anc_after_lat": r[10], "anc_after_lon": r[11], "anc_after_stanox": r[12]}
+                for r in rows]
+
+    def weight_versions(self) -> list[dict]:
+        """Return all weight version definitions."""
+        rows = self._db.execute(
+            "SELECT version, name, description FROM weight_versions ORDER BY version"
+        ).fetchall()
+        return [{"version": r[0], "name": r[1], "description": r[2]} for r in rows]
 
     def skip_list(self, min_count: int = 3) -> list[dict]:
         """Return berths with repeated skip count >= min_count, sorted by count desc."""
@@ -232,22 +317,70 @@ class BerthLearner:
     def _init_db(self) -> sqlite3.Connection:
         conn = sqlite3.connect(str(DB_PATH), check_same_thread=False)
         conn.execute("""
+            CREATE TABLE IF NOT EXISTS weight_versions (
+                version     INTEGER PRIMARY KEY,
+                name        TEXT    NOT NULL,
+                description TEXT,
+                created_at  INTEGER NOT NULL
+            )
+        """)
+        conn.executemany(
+            "INSERT OR IGNORE INTO weight_versions VALUES (?,?,?,?)",
+            [
+                (1, "frac_window",
+                 "Confidence peaks at midpoint between anchors, divided by window duration. "
+                 "Formula: (1 - 2*|frac - 0.5|) / window_seconds",
+                 0),
+                (2, "dt_anchors_sq",
+                 "Inverse squared seconds to nearest TRUST anchor on each side. "
+                 "Formula: 1/dt_before^2 + 1/dt_after^2",
+                 0),
+                (3, "dt_anchors_min",
+                 "Inverse minutes to nearest TRUST anchor on each side (linear, not squared). "
+                 "Formula: 1/dt_before_min + 1/dt_after_min",
+                 0),
+            ]
+        )
+        conn.execute("""
             CREATE TABLE IF NOT EXISTS berth_observations (
-                area_id     TEXT    NOT NULL,
-                berth_id    TEXT    NOT NULL,
-                lat         REAL    NOT NULL,
-                lon         REAL    NOT NULL,
-                bearing     REAL,
-                observed_at INTEGER NOT NULL,
+                area_id         TEXT    NOT NULL,
+                berth_id        TEXT    NOT NULL,
+                lat             REAL    NOT NULL,
+                lon             REAL    NOT NULL,
+                bearing         REAL,
+                observed_at     INTEGER NOT NULL,
+                weight          REAL    NOT NULL DEFAULT 1.0,
+                weight_version  INTEGER NOT NULL DEFAULT 1,
+                dt_before       REAL,
+                dt_after        REAL,
+                anc_before_lat  REAL,
+                anc_before_lon  REAL,
+                anc_before_stanox TEXT,
+                anc_after_lat   REAL,
+                anc_after_lon   REAL,
+                anc_after_stanox TEXT,
                 PRIMARY KEY (area_id, berth_id, observed_at)
             )
         """)
-        # Migrate existing databases that predate the bearing column
-        try:
-            conn.execute("ALTER TABLE berth_observations ADD COLUMN bearing REAL")
-            conn.commit()
-        except sqlite3.OperationalError:
-            pass  # column already exists
+        # Migrate existing databases
+        for stmt in (
+            "ALTER TABLE berth_observations ADD COLUMN bearing REAL",
+            "ALTER TABLE berth_observations ADD COLUMN weight REAL NOT NULL DEFAULT 1.0",
+            "ALTER TABLE berth_observations ADD COLUMN weight_version INTEGER NOT NULL DEFAULT 1",
+            "ALTER TABLE berth_observations ADD COLUMN dt_before REAL",
+            "ALTER TABLE berth_observations ADD COLUMN dt_after REAL",
+            "ALTER TABLE berth_observations ADD COLUMN anc_before_lat REAL",
+            "ALTER TABLE berth_observations ADD COLUMN anc_before_lon REAL",
+            "ALTER TABLE berth_observations ADD COLUMN anc_before_stanox TEXT",
+            "ALTER TABLE berth_observations ADD COLUMN anc_after_lat REAL",
+            "ALTER TABLE berth_observations ADD COLUMN anc_after_lon REAL",
+            "ALTER TABLE berth_observations ADD COLUMN anc_after_stanox TEXT",
+        ):
+            try:
+                conn.execute(stmt)
+                conn.commit()
+            except sqlite3.OperationalError:
+                pass  # column already exists
         conn.execute("""
             CREATE TABLE IF NOT EXISTS berth_coords (
                 area_id    TEXT    NOT NULL,
@@ -285,48 +418,89 @@ class BerthLearner:
         print(f"[LEARN]  Loaded {len(self._cache):,} learned berth coordinates")
 
     def _record(self, area_id: str, berth_id: str,
-                lat: float, lon: float, bearing: Optional[float], ts: int) -> None:
+                lat: float, lon: float, bearing: Optional[float], ts: int,
+                weight: float = 1.0, weight_version: int = 1,
+                dt_before: Optional[float] = None, dt_after: Optional[float] = None,
+                anc_before_lat: Optional[float] = None, anc_before_lon: Optional[float] = None,
+                anc_before_stanox: Optional[str] = None,
+                anc_after_lat: Optional[float] = None, anc_after_lon: Optional[float] = None,
+                anc_after_stanox: Optional[str] = None) -> None:
         """Persist one observation and recompute the summary for this berth."""
         try:
             with self._lock:
                 self._db.execute(
-                    "INSERT OR IGNORE INTO berth_observations VALUES (?,?,?,?,?,?)",
-                    (area_id, berth_id, lat, lon, bearing, ts)
+                    "INSERT OR IGNORE INTO berth_observations "
+                    "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                    (area_id, berth_id, lat, lon, bearing, ts,
+                     weight, weight_version, dt_before, dt_after,
+                     anc_before_lat, anc_before_lon, anc_before_stanox,
+                     anc_after_lat, anc_after_lon, anc_after_stanox)
                 )
                 self._db.commit()
                 self._recompute(area_id, berth_id)
         except Exception as exc:
             print(f"[LEARN]  DB error: {exc}")
 
+    # β multiplier: v2 observations count this many times more than v1 in the blend
+    _V2_BETA = 5
+
     def _recompute(self, area_id: str, berth_id: str) -> None:
-        """Recompute mean coordinate and variance; update cache if converged."""
-        rows = self._db.execute(
-            "SELECT lat, lon FROM berth_observations "
-            "WHERE area_id=? AND berth_id=?",
+        """Recompute position as a blend of v1 and v2 centroids weighted by n, with v2 scaled by β.
+        Each version's centroid uses its own weighted mean. Once enough v2 data accumulates,
+        v1 becomes negligible. Falls back to v1-only if no v2 observations exist."""
+        v1_rows = self._db.execute(
+            "SELECT lat, lon, weight FROM berth_observations "
+            "WHERE area_id=? AND berth_id=? AND weight_version=1",
             (area_id, berth_id)
         ).fetchall()
-        if not rows:
+        v3_rows = self._db.execute(
+            "SELECT lat, lon, weight FROM berth_observations "
+            "WHERE area_id=? AND berth_id=? AND weight_version=3",
+            (area_id, berth_id)
+        ).fetchall()
+
+        if not v1_rows and not v3_rows:
             return
 
-        n       = len(rows)
-        lats    = [r[0] for r in rows]
-        lons    = [r[1] for r in rows]
-        med_lat = statistics.median(lats)
-        med_lon = statistics.median(lons)
+        def weighted_centroid(rows):
+            total_w = sum(r[2] for r in rows)
+            if total_w > 0:
+                return (sum(r[0] * r[2] for r in rows) / total_w,
+                        sum(r[1] * r[2] for r in rows) / total_w)
+            n = len(rows)
+            return (sum(r[0] for r in rows) / n, sum(r[1] for r in rows) / n)
 
-        lat_m   = 111_320.0
-        lon_m   = 111_320.0 * math.cos(math.radians(med_lat))
+        n1 = len(v1_rows)
+        n3 = len(v3_rows)
+        effective_n3 = n3 * self._V2_BETA
 
-        # SD around the mean (kept as-is for now)
-        avg_lat = sum(lats) / n
-        avg_lon = sum(lons) / n
-        sd_m    = math.sqrt(
+        if n3 == 0:
+            avg_lat, avg_lon = weighted_centroid(v1_rows)
+        elif n1 == 0:
+            avg_lat, avg_lon = weighted_centroid(v3_rows)
+        else:
+            c1_lat, c1_lon = weighted_centroid(v1_rows)
+            c3_lat, c3_lon = weighted_centroid(v3_rows)
+            total = n1 + effective_n3
+            avg_lat = (n1 * c1_lat + effective_n3 * c3_lat) / total
+            avg_lon = (n1 * c1_lon + effective_n3 * c3_lon) / total
+
+        n = n1 + n3
+        rows = v1_rows + v3_rows
+
+        # Use weighted mean as the canonical coordinate
+        med_lat, med_lon = avg_lat, avg_lon
+
+        lat_m = 111_320.0
+        lon_m = 111_320.0 * math.cos(math.radians(med_lat))
+
+        sd_m = math.sqrt(
             sum((r[0] - avg_lat) ** 2 * lat_m ** 2 +
                 (r[1] - avg_lon) ** 2 * lon_m ** 2
                 for r in rows) / n
         )
 
-        # IQR of per-observation distances from the median position
+        # IQR of per-observation distances from the mean position
         dists = sorted(
             math.sqrt((r[0] - med_lat) ** 2 * lat_m ** 2 +
                       (r[1] - med_lon) ** 2 * lon_m ** 2)
@@ -336,7 +510,7 @@ class BerthLearner:
             q1, _, q3 = statistics.quantiles(dists, n=4)
             iqr_m = q3 - q1
         else:
-            iqr_m = dists[-1] - dists[0]  # fallback for n < 4: full range
+            iqr_m = dists[-1] - dists[0]
 
         self._db.execute(
             "INSERT OR REPLACE INTO berth_coords VALUES (?,?,?,?,?,?,?,?)",

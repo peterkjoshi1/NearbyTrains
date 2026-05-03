@@ -232,6 +232,10 @@ class Handler(BaseHTTPRequestHandler):
             self._skip_log()
         elif parsed.path == "/trains/berth_observations":
             self._berth_observations(parsed.query)
+        elif parsed.path == "/trains/recalc_weights":
+            self._recalc_weights()
+        elif parsed.path == "/trains/weight_versions":
+            self._json(_learner.weight_versions() if _learner else [])
         elif parsed.path == "/trains/debug":
             self._train_debug(parsed.query)
         else:
@@ -268,6 +272,9 @@ class Handler(BaseHTTPRequestHandler):
 
     def _skip_log(self):
         self._json(_learner.skip_list() if _learner else [])
+
+    def _recalc_weights(self):
+        self._json(_learner.recalc_weights() if _learner else {"error": "learner not ready"})
 
     def _berth_observations(self, qs: str):
         params = urllib.parse.parse_qs(qs)
@@ -347,7 +354,8 @@ class CombinedListener(stomp.ConnectionListener):
         except (ValueError, TypeError):
             ts = time.time()
         _debug(f"[CA_MSG] {headcode}  area={area_id}  berth={to_berth}")
-        self.learner.observe_berth_step(headcode, area_id, to_berth, ts)
+        if self.lookup.lookup(area_id, to_berth) is None:
+            self.learner.observe_berth_step(headcode, area_id, to_berth, ts)
         self.executor.submit(self._resolve, headcode, area_id, to_berth)
 
     def _handle_trust(self, item: dict):
@@ -373,7 +381,7 @@ class CombinedListener(stomp.ConnectionListener):
         # Use wall-clock time as anchor — TRUST actual_timestamp contains
         # predicted future times, not actual past times, so it can't be used
         # for bracketing against TD berth step timestamps.
-        self.learner.add_anchor(headcode, time.time(), lat, lon)
+        self.learner.add_anchor(headcode, time.time(), lat, lon, stanox)
         _inc("trust_anchors")
         _debug(f"[TRUST]  {headcode} stanox={stanox}  ({lat:.4f},{lon:.4f})")
 
@@ -536,6 +544,8 @@ def main():
 
     threading.Thread(target=background_loop, args=(td_conn, username, password),
                      daemon=True, name="bg").start()
+    threading.Thread(target=_learner.recalc_weights,
+                     daemon=True, name="recalc-weights").start()
 
     server = HTTPServer(("0.0.0.0", HTTP_PORT), Handler)
     print(f"[HTTP]  http://localhost:{HTTP_PORT}/trains?lat=57.06&lon=-4.12&radius=50")

@@ -3,7 +3,7 @@
 //  NearbyTrains
 //
 
-import MapKit
+import MapboxMaps
 import SwiftUI
 
 // MARK: - Models
@@ -84,25 +84,33 @@ class DebugService {
     var stats: ServerStats?
     var snapLog: [SnapCorrection] = []
     var skipLog: [SkipEntry] = []
+    var weightVersions: [WeightVersion] = []
     var isLoading = false
     var error: String?
 
     func load() async {
         isLoading = true
         error = nil
-        async let statsData = fetch(path: "trains/stats")
-        async let snapData  = fetch(path: "trains/snap_log")
-        async let skipData  = fetch(path: "trains/skip_log")
+        async let statsData    = fetch(path: "trains/stats")
+        async let snapData     = fetch(path: "trains/snap_log")
+        async let skipData     = fetch(path: "trains/skip_log")
+        async let versionsData = fetch(path: "trains/weight_versions")
         do {
-            let (s, n, k) = try await (statsData, snapData, skipData)
-            stats   = try JSONDecoder().decode(ServerStats.self, from: s)
-            snapLog = try JSONDecoder().decode([SnapCorrection].self, from: n)
+            let (s, n, k, v) = try await (statsData, snapData, skipData, versionsData)
+            stats          = try JSONDecoder().decode(ServerStats.self, from: s)
+            snapLog        = try JSONDecoder().decode([SnapCorrection].self, from: n)
                 .sorted { $0.distanceM > $1.distanceM }
-            skipLog = try JSONDecoder().decode([SkipEntry].self, from: k)
+            skipLog        = try JSONDecoder().decode([SkipEntry].self, from: k)
+            weightVersions = try JSONDecoder().decode([WeightVersion].self, from: v)
         } catch {
             self.error = error.localizedDescription
         }
         isLoading = false
+    }
+
+    func recalcWeights() async {
+        _ = try? await fetch(path: "trains/recalc_weights")
+        await load()
     }
 
     private func fetch(path: String) async throws -> Data {
@@ -139,12 +147,20 @@ struct DebugView: View {
             .navigationTitle("Debug")
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {
-                    Button {
-                        Task { await service.load() }
-                    } label: {
-                        Image(systemName: "arrow.clockwise")
+                    HStack {
+                        Button {
+                            Task { await service.recalcWeights() }
+                        } label: {
+                            Image(systemName: "wand.and.stars")
+                        }
+                        .disabled(service.isLoading)
+                        Button {
+                            Task { await service.load() }
+                        } label: {
+                            Image(systemName: "arrow.clockwise")
+                        }
+                        .disabled(service.isLoading)
                     }
-                    .disabled(service.isLoading)
                 }
             }
             .sheet(item: $selectedSnap) { snap in
@@ -168,6 +184,22 @@ struct DebugView: View {
             stat("Learned berths",    "\(s.learnedBerths)")
             stat("Rail segments",     "\(s.railSegments)")
         }
+        if !service.weightVersions.isEmpty {
+            Section("Weight versions") {
+                ForEach(service.weightVersions) { v in
+                    VStack(alignment: .leading, spacing: 3) {
+                        HStack {
+                            Text("v\(v.version)").font(.system(.caption, design: .monospaced).weight(.semibold))
+                            Text(v.name).font(.system(.caption, design: .monospaced))
+                        }
+                        if let desc = v.description {
+                            Text(desc).font(.caption2).foregroundStyle(.secondary)
+                        }
+                    }
+                    .padding(.vertical, 2)
+                }
+            }
+        }
     }
 
     private func stat(_ label: String, _ value: String) -> some View {
@@ -183,12 +215,22 @@ struct DebugView: View {
 
     @ViewBuilder
     private var snapLogSection: some View {
-        Section("Snap corrections — \(service.snapLog.count) (sorted by distance)") {
-            if service.snapLog.isEmpty {
+        snapSection("corpus",  label: "Bad NR source data")
+        snapSection("learned", label: "Bad interpolation")
+        snapSection("trust",   label: "Bad TRUST position")
+    }
+
+    @ViewBuilder
+    private func snapSection(_ source: String, label: String) -> some View {
+        let items = service.snapLog
+            .filter { $0.source == source }
+            .prefix(20)
+        Section("\(label) — \(items.count) (top 20 by distance)") {
+            if items.isEmpty {
                 Text("None recorded yet")
                     .foregroundStyle(.secondary).font(.subheadline)
             } else {
-                ForEach(service.snapLog) { correction in
+                ForEach(items) { correction in
                     Button { selectedSnap = correction } label: {
                         SnapRow(correction: correction)
                     }
@@ -319,78 +361,60 @@ private struct BerthObservation: Decodable {
     let lat: Double
     let lon: Double
     let observedAt: Int
+    let weight: Double?
+    let weightVersion: Int?
+    let dtBefore: Double?
+    let dtAfter: Double?
+    let ancBeforeLat: Double?
+    let ancBeforeLon: Double?
+    let ancBeforeStanox: String?
+    let ancAfterLat: Double?
+    let ancAfterLon: Double?
+    let ancAfterStanox: String?
     enum CodingKeys: String, CodingKey {
-        case lat, lon
-        case observedAt = "observed_at"
+        case lat, lon, weight
+        case observedAt       = "observed_at"
+        case weightVersion    = "weight_version"
+        case dtBefore         = "dt_before"
+        case dtAfter          = "dt_after"
+        case ancBeforeLat     = "anc_before_lat"
+        case ancBeforeLon     = "anc_before_lon"
+        case ancBeforeStanox  = "anc_before_stanox"
+        case ancAfterLat      = "anc_after_lat"
+        case ancAfterLon      = "anc_after_lon"
+        case ancAfterStanox   = "anc_after_stanox"
     }
+}
+
+struct WeightVersion: Decodable, Identifiable {
+    let version: Int
+    let name: String
+    let description: String?
+    var id: Int { version }
 }
 
 struct SnapMapView: View {
     let correction: SnapCorrection
-
     @State private var observations: [BerthObservation] = []
-
-    private var rawCoord: CLLocationCoordinate2D {
-        CLLocationCoordinate2D(latitude: correction.rawLat, longitude: correction.rawLon)
-    }
-    private var snappedCoord: CLLocationCoordinate2D {
-        CLLocationCoordinate2D(latitude: correction.snappedLat, longitude: correction.snappedLon)
-    }
-    private var region: MKCoordinateRegion {
-        var lats = [correction.rawLat, correction.snappedLat] + observations.map(\.lat)
-        var lons = [correction.rawLon, correction.snappedLon] + observations.map(\.lon)
-        let minLat = lats.min()!, maxLat = lats.max()!
-        let minLon = lons.min()!, maxLon = lons.max()!
-        return MKCoordinateRegion(
-            center: CLLocationCoordinate2D(
-                latitude: (minLat + maxLat) / 2,
-                longitude: (minLon + maxLon) / 2
-            ),
-            span: MKCoordinateSpan(
-                latitudeDelta: max(maxLat - minLat, 0.004) * 4,
-                longitudeDelta: max(maxLon - minLon, 0.004) * 4
-            )
-        )
-    }
+    @State private var showData = false
 
     var body: some View {
         NavigationStack {
-            Map(initialPosition: .region(region)) {
-                // Observation scatter (learned only)
-                ForEach(Array(observations.enumerated()), id: \.offset) { _, obs in
-                    Annotation("", coordinate: CLLocationCoordinate2D(latitude: obs.lat, longitude: obs.lon), anchor: .center) {
-                        Circle()
-                            .fill(.white.opacity(0.7))
-                            .frame(width: 8, height: 8)
-                            .overlay(Circle().stroke(.gray, lineWidth: 1))
-                    }
-                }
-                // Dashed line: raw → snapped
-                MapPolyline(coordinates: [rawCoord, snappedCoord])
-                    .stroke(.orange, style: StrokeStyle(lineWidth: 2, dash: [6, 4]))
-                // Raw (wrong) position
-                Annotation("Raw", coordinate: rawCoord, anchor: .bottom) {
-                    VStack(spacing: 2) {
-                        Text(correction.source).font(.caption2).foregroundStyle(.white)
-                            .padding(.horizontal, 4).padding(.vertical, 2)
-                            .background(.red).clipShape(RoundedRectangle(cornerRadius: 3))
-                        Image(systemName: "circle.fill").foregroundStyle(.red).font(.caption)
-                    }
-                }
-                // Snapped (correct) position
-                Annotation("Snapped", coordinate: snappedCoord, anchor: .bottom) {
-                    VStack(spacing: 2) {
-                        Text("rail").font(.caption2).foregroundStyle(.white)
-                            .padding(.horizontal, 4).padding(.vertical, 2)
-                            .background(.green).clipShape(RoundedRectangle(cornerRadius: 3))
-                        Image(systemName: "circle.fill").foregroundStyle(.green).font(.caption)
-                    }
+            Group {
+                if showData {
+                    dataView
+                } else {
+                    SnapDebugMapView(correction: correction, observations: observations)
+                        .ignoresSafeArea()
                 }
             }
-            .mapStyle(.hybrid)
             .navigationTitle("\(correction.area):\(correction.berth) · \(correction.distanceM)m")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
+                ToolbarItem(placement: .topBarLeading) {
+                    Button(showData ? "Map" : "Data") { showData.toggle() }
+                        .font(.caption)
+                }
                 ToolbarItem(placement: .topBarTrailing) {
                     VStack(alignment: .trailing, spacing: 2) {
                         Text(correction.headcode)
@@ -399,15 +423,222 @@ struct SnapMapView: View {
                             .font(.caption2)
                             .foregroundStyle(.secondary)
                     }
+                    }
                 }
-            }
         }
         .task {
-            guard correction.source == "learned" else { return }
             let urlStr = "\(TrainPositionService.serverBase)/trains/berth_observations?area=\(correction.area)&berth=\(correction.berth)"
             guard let url = URL(string: urlStr),
                   let (data, _) = try? await URLSession.shared.data(from: url) else { return }
             observations = (try? JSONDecoder().decode([BerthObservation].self, from: data)) ?? []
+        }
+    }
+
+    private var dataView: some View {
+        List {
+            Section("Snap correction") {
+                row("Raw",     String(format: "%.5f, %.5f", correction.rawLat, correction.rawLon))
+                row("Snapped", String(format: "%.5f, %.5f", correction.snappedLat, correction.snappedLon))
+                row("Distance", "\(correction.distanceM) m")
+                row("Source",  correction.source)
+            }
+            Section("Observations (\(observations.count) total)") {
+                if observations.isEmpty {
+                    Text("None (source: \(correction.source))")
+                        .foregroundStyle(.secondary).font(.caption)
+                } else {
+                    ForEach(Array(observations.reversed().prefix(20).enumerated()), id: \.offset) { i, obs in
+                        VStack(alignment: .leading, spacing: 2) {
+                            row(String(format: "#%d  v%d  w=%.4f", i + 1, obs.weightVersion ?? 1, obs.weight ?? 1.0),
+                                String(format: "%.5f, %.5f", obs.lat, obs.lon))
+                            if let dtb = obs.dtBefore, let dta = obs.dtAfter {
+                                Text(String(format: "dt_before=%.0fs  dt_after=%.0fs", dtb, dta))
+                                    .font(.system(.caption2, design: .monospaced))
+                                    .foregroundStyle(.secondary)
+                            }
+                            if let bs = obs.ancBeforeStanox, let as_ = obs.ancAfterStanox, !bs.isEmpty {
+                                Text("anchors: \(bs) → \(as_)")
+                                    .font(.system(.caption2, design: .monospaced))
+                                    .foregroundStyle(.secondary)
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        .font(.system(.caption, design: .monospaced))
+    }
+
+    private func row(_ label: String, _ value: String) -> some View {
+        HStack {
+            Text(label).foregroundStyle(.secondary)
+            Spacer()
+            Text(value)
+        }
+        .font(.system(.caption, design: .monospaced))
+    }
+}
+
+// MARK: - Mapbox snap debug map
+
+private struct SnapDebugMapView: UIViewRepresentable {
+    let correction: SnapCorrection
+    let observations: [BerthObservation]
+
+    func makeCoordinator() -> Coordinator { Coordinator() }
+
+    func makeUIView(context: Context) -> MapView {
+        let initialCamera = CameraOptions(
+            center: CLLocationCoordinate2D(latitude: correction.rawLat, longitude: correction.rawLon),
+            zoom: 13)
+        let mapView = MapView(frame: .zero, mapInitOptions: MapInitOptions(cameraOptions: initialCamera, styleURI: .streets))
+        mapView.autoresizingMask = [.flexibleWidth, .flexibleHeight]
+        let coord = context.coordinator
+        coord.circleMgr    = mapView.annotations.makeCircleAnnotationManager(id: "debug-circles")
+        coord.polylineMgr  = mapView.annotations.makePolylineAnnotationManager(id: "debug-line")
+        coord.anchorMgr    = mapView.annotations.makePolylineAnnotationManager(id: "debug-anchors")
+        coord.styleToken  = mapView.mapboxMap.onStyleLoaded.observe { [weak mapView] _ in
+            guard let mapView else { return }
+            coord.addRailLayers(to: mapView)
+        }
+        return mapView
+    }
+
+    func updateUIView(_ mapView: MapView, context: Context) {
+        context.coordinator.sync(correction: correction, observations: observations, mapView: mapView)
+    }
+
+    // MARK: Coordinator
+
+    final class Coordinator: NSObject {
+        var circleMgr:   CircleAnnotationManager?
+        var polylineMgr: PolylineAnnotationManager?
+        var anchorMgr:   PolylineAnnotationManager?
+        var styleToken:  AnyCancelable?
+        var lastObsCount = -1
+
+        func addRailLayers(to mapView: MapView) {
+            let railColor = StyleColor(UIColor(red: 0.8, green: 0.0, blue: 0.0, alpha: 1))
+            for id in ["road-rail", "bridge-rail"] {
+                try? mapView.mapboxMap.updateLayer(withId: id, type: LineLayer.self) { layer in
+                    layer.lineColor   = .constant(railColor)
+                    layer.lineWidth   = .constant(3.0)
+                    layer.lineOpacity = .constant(1.0)
+                    layer.minZoom     = 5
+                }
+            }
+        }
+
+        func sync(correction: SnapCorrection, observations: [BerthObservation], mapView: MapView) {
+            let rawCoord     = CLLocationCoordinate2D(latitude: correction.rawLat,     longitude: correction.rawLon)
+            let snappedCoord = CLLocationCoordinate2D(latitude: correction.snappedLat, longitude: correction.snappedLon)
+
+            // Separate v1 and v3 observations
+            let v1obs = observations.filter { ($0.weightVersion ?? 1) == 1 }
+            let v3obs = observations.filter { ($0.weightVersion ?? 1) == 3 }
+
+            // v1: orange dots, log-normalised by 1/weight (dark = high 1/w = low quality)
+            let v1InvW = v1obs.map { 1.0 / max($0.weight ?? 1.0, 1e-6) }
+            let v1LogMin = log((v1InvW.min() ?? 0.01) + 0.001)
+            let v1LogMax = log((v1InvW.max() ?? 1.0) + 0.001)
+            let v1LogRange = v1LogMax > v1LogMin ? v1LogMax - v1LogMin : 1
+
+            // v3: blue dots, log-normalised by 1/weight (dark = high 1/w = low quality)
+            let v3InvW = v3obs.map { 1.0 / max($0.weight ?? 1.0, 1e-6) }
+            let v3LogMin = log((v3InvW.min() ?? 0.01) + 0.001)
+            let v3LogMax = log((v3InvW.max() ?? 1.0) + 0.001)
+            let v3LogRange = v3LogMax > v3LogMin ? v3LogMax - v3LogMin : 1
+
+            var circles: [CircleAnnotation] = []
+
+            // v1 orange dots, dark = high 1/weight (far from anchor = low quality)
+            for (i, obs) in v1obs.enumerated() {
+                let invW = 1.0 / max(obs.weight ?? 1.0, 1e-6)
+                let t = (log(invW + 0.001) - v1LogMin) / v1LogRange  // 0=good, 1=bad
+                let r = 1.0 - t * 0.7
+                let g = 0.5 - t * 0.35
+                var a = CircleAnnotation(id: "v1-\(i)",
+                    centerCoordinate: CLLocationCoordinate2D(latitude: obs.lat, longitude: obs.lon))
+                a.circleColor       = StyleColor(UIColor(red: r, green: g, blue: 0.0, alpha: 0.8))
+                a.circleRadius      = 4
+                a.circleStrokeColor = StyleColor(UIColor(red: r * 0.5, green: g * 0.5, blue: 0.0, alpha: 0.5))
+                a.circleStrokeWidth = 1
+                circles.append(a)
+            }
+
+            // v3 blue dots, dark = high 1/weight (far from anchor = low quality)
+            for (i, obs) in v3obs.enumerated() {
+                let invW = 1.0 / max(obs.weight ?? 1.0, 1e-6)
+                let t = (log(invW + 0.001) - v3LogMin) / v3LogRange  // 0=good, 1=bad
+                let darkness = t * 0.8
+                var a = CircleAnnotation(id: "v3-\(i)",
+                    centerCoordinate: CLLocationCoordinate2D(latitude: obs.lat, longitude: obs.lon))
+                a.circleColor       = StyleColor(UIColor(red: 0.3 * (1 - darkness), green: 0.6 - 0.5 * darkness, blue: 1.0 - 0.7 * darkness, alpha: 0.9))
+                a.circleRadius      = 5
+                a.circleStrokeColor = StyleColor(UIColor(white: 0.2, alpha: 0.6))
+                a.circleStrokeWidth = 1
+                circles.append(a)
+            }
+
+            var rawA = CircleAnnotation(id: "raw", centerCoordinate: rawCoord)
+            rawA.circleColor       = StyleColor(UIColor.red)
+            rawA.circleRadius      = 9
+            rawA.circleStrokeColor = StyleColor(UIColor.white)
+            rawA.circleStrokeWidth = 2
+            circles.append(rawA)
+
+            var snapA = CircleAnnotation(id: "snapped", centerCoordinate: snappedCoord)
+            snapA.circleColor       = StyleColor(UIColor(red: 0.2, green: 0.8, blue: 0.2, alpha: 1))
+            snapA.circleRadius      = 9
+            snapA.circleStrokeColor = StyleColor(UIColor.white)
+            snapA.circleStrokeWidth = 2
+            circles.append(snapA)
+
+            circleMgr?.annotations = circles
+
+            // Orange line raw → snapped
+            var line = PolylineAnnotation(id: "snap-line", lineCoordinates: [rawCoord, snappedCoord])
+            line.lineColor = StyleColor(UIColor.orange)
+            line.lineWidth = 2.5
+            polylineMgr?.annotations = [line]
+
+            // Purple lines: anchor A → observation → anchor B (v2 only, first 20)
+            var anchorLines: [PolylineAnnotation] = []
+            let v2obs = observations.filter { ($0.weightVersion ?? 1) == 2 }.prefix(20)
+            for (i, obs) in v2obs.enumerated() {
+                guard let bLat = obs.ancBeforeLat, let bLon = obs.ancBeforeLon,
+                      let aLat = obs.ancAfterLat,  let aLon = obs.ancAfterLon else { continue }
+                let obsCoord    = CLLocationCoordinate2D(latitude: obs.lat, longitude: obs.lon)
+                let beforeCoord = CLLocationCoordinate2D(latitude: bLat,   longitude: bLon)
+                let afterCoord  = CLLocationCoordinate2D(latitude: aLat,   longitude: aLon)
+                var al = PolylineAnnotation(id: "anc-\(i)", lineCoordinates: [beforeCoord, obsCoord, afterCoord])
+                al.lineColor = StyleColor(UIColor(red: 0.6, green: 0.0, blue: 0.8, alpha: 0.5))
+                al.lineWidth = 1.5
+                anchorLines.append(al)
+            }
+            anchorMgr?.annotations = anchorLines
+
+            // Fit camera whenever obs count changes (fires for initial render and again when obs load)
+            guard observations.count != lastObsCount else { return }
+            lastObsCount = observations.count
+            let fitMax = observations.compactMap { $0.weight }.max() ?? 1.0
+            let threshold = fitMax * 0.05
+            let fittedObs = observations.filter { ($0.weight ?? 1.0) >= threshold }
+            let allCoords = [rawCoord, snappedCoord] + fittedObs.map {
+                CLLocationCoordinate2D(latitude: $0.lat, longitude: $0.lon)
+            }
+            let midLat = allCoords.map(\.latitude).reduce(0, +)  / Double(allCoords.count)
+            let midLon = allCoords.map(\.longitude).reduce(0, +) / Double(allCoords.count)
+            var camera = mapView.mapboxMap.camera(
+                for: allCoords,
+                padding: UIEdgeInsets(top: 80, left: 60, bottom: 80, right: 60),
+                bearing: nil, pitch: nil
+            )
+            if camera.center == nil {
+                camera.center = CLLocationCoordinate2D(latitude: midLat, longitude: midLon)
+                camera.zoom   = 13
+            }
+            mapView.camera.ease(to: camera, duration: observations.isEmpty ? 0 : 0.5)
         }
     }
 }
