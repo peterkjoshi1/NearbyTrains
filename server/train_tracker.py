@@ -94,10 +94,15 @@ _stats_lock = threading.Lock()
 _snap_log: collections.deque = collections.deque(maxlen=200)
 _snap_log_lock = threading.Lock()
 
+# Prevents concurrent reconnection attempts from on_disconnected and the watchdog
+_reconnect_lock = threading.Lock()
+
 def _seed_corpus_snap_log(lookup):
     """Pre-populate snap log with corpus berths that have large snap corrections."""
     candidates = []
     for area, berth, lat, lon in lookup.all_corpus_berths():
+        if lat is None or lon is None:
+            continue
         snapped_lat, snapped_lon, snap_dist = snap_to_rail.snap(lat, lon)
         if snap_dist < snap_to_rail.MAX_SNAP_KM:
             candidates.append((snap_dist, area, berth, lat, lon, snapped_lat, snapped_lon))
@@ -510,7 +515,18 @@ def background_loop(conn, username: str, password: str):
 SESSION_WAIT = 300   # seconds to wait when broker reports an existing session (AMQ339009)
 
 def _connect_with_backoff(conn, username: str, password: str, label: str) -> None:
-    """Connect with exponential backoff — doubles delay each attempt, caps at 1800 s."""
+    """Connect with exponential backoff — doubles delay each attempt, caps at 1800 s.
+    Holds _reconnect_lock for the duration so concurrent callers skip rather than pile up."""
+    if not _reconnect_lock.acquire(blocking=False):
+        print(f"{label} Reconnect already in progress — skipping.", file=sys.stderr)
+        return
+    try:
+        _connect_with_backoff_inner(conn, username, password, label)
+    finally:
+        _reconnect_lock.release()
+
+
+def _connect_with_backoff_inner(conn, username: str, password: str, label: str) -> None:
     delay = RECONNECT_DELAY
     while True:
         # Clean disconnect before each attempt so the broker sees a fresh start

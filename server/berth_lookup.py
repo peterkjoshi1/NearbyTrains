@@ -181,11 +181,14 @@ class BerthLookup:
         return lat, lon
 
     def all_corpus_berths(self):
-        """Yield (area_id, berth_id, lat, lon) for every berth resolvable via corpus."""
-        for (area, berth) in self._smart_index:
-            result = self.lookup(area, berth)
-            if result is not None:
-                yield area, berth, result.lat, result.lon
+        """Yield (area_id, berth_id, lat, lon) for every berth resolvable via corpus (silent)."""
+        for (area, berth), (stanox, _name) in self._smart_index.items():
+            crs = self._corpus_index.get(stanox)
+            if not crs:
+                continue
+            lat, lon = self._resolve_coordinates(crs)
+            if lat is not None:
+                yield area, berth, lat, lon
 
     # ------------------------------------------------------------------ #
     # Data loading                                                         #

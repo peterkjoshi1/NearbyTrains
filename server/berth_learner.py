@@ -498,9 +498,15 @@ class BerthLearner:
         else:
             iqr_m = dists[-1] - dists[0]
 
+        now = int(time.time())
         self._db.execute(
-            "INSERT OR REPLACE INTO berth_coords VALUES (?,?,?,?,?,?,?,?)",
-            (area_id, berth_id, avg_lat, avg_lon, n, sd_m, iqr_m, int(time.time()))
+            "INSERT OR REPLACE INTO berth_coords (area_id, berth_id, lat, lon, obs_count, sd_m, updated_at)"
+            " VALUES (?,?,?,?,?,?,?)",
+            (area_id, berth_id, avg_lat, avg_lon, n, sd_m, now)
+        )
+        self._db.execute(
+            "UPDATE berth_coords SET iqr_m=? WHERE area_id=? AND berth_id=?",
+            (iqr_m, area_id, berth_id)
         )
         self._db.commit()
 
@@ -516,7 +522,7 @@ class BerthLearner:
                       f"n={n}  sd={sd_m:.0f}m  iqr={iqr_m:.0f}m  "
                       f"(ratio={ratio:.2f} — {label}){kept}")
             else:
-                self._cache[(area_id, berth_id)] = (med_lat, med_lon)
+                self._cache[(area_id, berth_id)] = (avg_lat, avg_lon)
                 print(f"[LEARN]  {area_id}:{berth_id} → "
-                      f"({med_lat:.4f}, {med_lon:.4f})  "
+                      f"({avg_lat:.4f}, {avg_lon:.4f})  "
                       f"n={n}  sd={sd_m:.0f}m  iqr={iqr_m:.0f}m")
