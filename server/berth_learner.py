@@ -188,22 +188,17 @@ class BerthLearner:
         return len(self._cache)
 
     def obs_version_stats(self) -> dict:
-        """Return v1/v3 observation and berth coverage counts."""
+        """Return v3 observation and berth coverage counts."""
         row = self._db.execute("""
             SELECT
-                COUNT(DISTINCT area_id || ':' || berth_id)                                        AS total_berths,
-                SUM(CASE WHEN weight_version = 1 THEN 1 ELSE 0 END)                               AS v1_obs,
-                SUM(CASE WHEN weight_version = 3 THEN 1 ELSE 0 END)                               AS v3_obs,
-                COUNT(DISTINCT CASE WHEN weight_version = 3 THEN area_id || ':' || berth_id END)  AS berths_with_v3,
-                COUNT(DISTINCT CASE WHEN weight_version = 1 THEN area_id || ':' || berth_id END)  AS berths_with_v1
+                COUNT(DISTINCT area_id || ':' || berth_id) AS berths_with_v3,
+                COUNT(*)                                   AS v3_obs
             FROM berth_observations
+            WHERE weight_version = 3
         """).fetchone()
-        total, v1_obs, v3_obs, berths_v3, berths_v1 = row
+        berths_v3, v3_obs = row
         return {
-            "total_berths":    total,
-            "berths_v1_only":  berths_v1 - berths_v3,
             "berths_with_v3":  berths_v3,
-            "v1_observations": v1_obs,
             "v3_observations": v3_obs,
         }
 
@@ -462,57 +457,28 @@ class BerthLearner:
             print(f"[LEARN]  DB error: {exc}")
 
     # β multiplier: v2 observations count this many times more than v1 in the blend
-    _V2_BETA = 5
-
     def _recompute(self, area_id: str, berth_id: str) -> None:
-        """Recompute position as a blend of v1 and v2 centroids weighted by n, with v2 scaled by β.
-        Each version's centroid uses its own weighted mean. Once enough v2 data accumulates,
-        v1 becomes negligible. Falls back to v1-only if no v2 observations exist."""
-        v1_rows = self._db.execute(
-            "SELECT lat, lon, weight FROM berth_observations "
-            "WHERE area_id=? AND berth_id=? AND weight_version=1",
-            (area_id, berth_id)
-        ).fetchall()
-        v3_rows = self._db.execute(
+        """Recompute position from v3 observations using weighted centroid (weight = 1/dt_min)."""
+        rows = self._db.execute(
             "SELECT lat, lon, weight FROM berth_observations "
             "WHERE area_id=? AND berth_id=? AND weight_version=3",
             (area_id, berth_id)
         ).fetchall()
 
-        if not v1_rows and not v3_rows:
+        if not rows:
             return
 
-        def weighted_centroid(rows):
-            total_w = sum(r[2] for r in rows)
-            if total_w > 0:
-                return (sum(r[0] * r[2] for r in rows) / total_w,
-                        sum(r[1] * r[2] for r in rows) / total_w)
-            n = len(rows)
-            return (sum(r[0] for r in rows) / n, sum(r[1] for r in rows) / n)
-
-        n1 = len(v1_rows)
-        n3 = len(v3_rows)
-        effective_n3 = n3 * self._V2_BETA
-
-        if n3 == 0:
-            avg_lat, avg_lon = weighted_centroid(v1_rows)
-        elif n1 == 0:
-            avg_lat, avg_lon = weighted_centroid(v3_rows)
+        n = len(rows)
+        total_w = sum(r[2] for r in rows)
+        if total_w > 0:
+            avg_lat = sum(r[0] * r[2] for r in rows) / total_w
+            avg_lon = sum(r[1] * r[2] for r in rows) / total_w
         else:
-            c1_lat, c1_lon = weighted_centroid(v1_rows)
-            c3_lat, c3_lon = weighted_centroid(v3_rows)
-            total = n1 + effective_n3
-            avg_lat = (n1 * c1_lat + effective_n3 * c3_lat) / total
-            avg_lon = (n1 * c1_lon + effective_n3 * c3_lon) / total
-
-        n = n1 + n3
-        rows = v1_rows + v3_rows
-
-        # Use weighted mean as the canonical coordinate
-        med_lat, med_lon = avg_lat, avg_lon
+            avg_lat = sum(r[0] for r in rows) / n
+            avg_lon = sum(r[1] for r in rows) / n
 
         lat_m = 111_320.0
-        lon_m = 111_320.0 * math.cos(math.radians(med_lat))
+        lon_m = 111_320.0 * math.cos(math.radians(avg_lat))
 
         sd_m = math.sqrt(
             sum((r[0] - avg_lat) ** 2 * lat_m ** 2 +
@@ -520,10 +486,10 @@ class BerthLearner:
                 for r in rows) / n
         )
 
-        # IQR of per-observation distances from the mean position
+        # IQR of per-observation distances from the centroid
         dists = sorted(
-            math.sqrt((r[0] - med_lat) ** 2 * lat_m ** 2 +
-                      (r[1] - med_lon) ** 2 * lon_m ** 2)
+            math.sqrt((r[0] - avg_lat) ** 2 * lat_m ** 2 +
+                      (r[1] - avg_lon) ** 2 * lon_m ** 2)
             for r in rows
         )
         if n >= 4:
@@ -534,7 +500,7 @@ class BerthLearner:
 
         self._db.execute(
             "INSERT OR REPLACE INTO berth_coords VALUES (?,?,?,?,?,?,?,?)",
-            (area_id, berth_id, med_lat, med_lon, n, sd_m, iqr_m, int(time.time()))
+            (area_id, berth_id, avg_lat, avg_lon, n, sd_m, iqr_m, int(time.time()))
         )
         self._db.commit()
 

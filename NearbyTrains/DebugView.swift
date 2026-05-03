@@ -18,10 +18,7 @@ struct ServerStats: Decodable {
     let trainsWith_coords: Int?
     let learnedBerths: Int
     let railSegments: Int
-    let totalBerths: Int?
-    let berthsV1Only: Int?
     let berthsWithV3: Int?
-    let v1Observations: Int?
     let v3Observations: Int?
 
     enum CodingKeys: String, CodingKey {
@@ -34,10 +31,7 @@ struct ServerStats: Decodable {
         case trainsWith_coords = "trains_with_coords"
         case learnedBerths   = "learned_berths"
         case railSegments    = "rail_segments"
-        case totalBerths     = "total_berths"
-        case berthsV1Only    = "berths_v1_only"
         case berthsWithV3    = "berths_with_v3"
-        case v1Observations  = "v1_observations"
         case v3Observations  = "v3_observations"
     }
 
@@ -193,12 +187,8 @@ struct DebugView: View {
             stat("Snap corrections",  "\(s.snapHits)")
             stat("Learned berths",    "\(s.learnedBerths)")
             stat("Rail segments",     "\(s.railSegments)")
-            if let total = s.totalBerths, let v3 = s.berthsWithV3, let v1only = s.berthsV1Only {
-                stat("v3 coverage", "\(v3)/\(total) berths (\(v1only) v1-only)")
-            }
-            if let v1 = s.v1Observations, let v3 = s.v3Observations {
-                stat("Observations", "v1: \(v1)  v3: \(v3)")
-            }
+            if let v3 = s.berthsWithV3 { stat("Berths learned (v3)", "\(v3)") }
+            if let v3 = s.v3Observations { stat("v3 observations", "\(v3)") }
         }
         if !service.weightVersions.isEmpty {
             Section("Weight versions") {
@@ -549,17 +539,8 @@ private struct SnapDebugMapView: UIViewRepresentable {
             let rawCoord     = CLLocationCoordinate2D(latitude: correction.rawLat,     longitude: correction.rawLon)
             let snappedCoord = CLLocationCoordinate2D(latitude: correction.snappedLat, longitude: correction.snappedLon)
 
-            // Separate v1 and v3 observations
-            let v1obs = observations.filter { ($0.weightVersion ?? 1) == 1 }
+            // v3 blue dots, log-normalised by 1/weight (dark = high 1/w = low quality)
             let v3obs = observations.filter { ($0.weightVersion ?? 1) == 3 }
-
-            // v1: orange dots, log-normalised by 1/weight (dark = high 1/w = low quality)
-            let v1InvW = v1obs.map { 1.0 / max($0.weight ?? 1.0, 1e-6) }
-            let v1LogMin = log((v1InvW.min() ?? 0.01) + 0.001)
-            let v1LogMax = log((v1InvW.max() ?? 1.0) + 0.001)
-            let v1LogRange = v1LogMax > v1LogMin ? v1LogMax - v1LogMin : 1
-
-            // v3: blue dots, log-normalised by 1/weight (dark = high 1/w = low quality)
             let v3InvW = v3obs.map { 1.0 / max($0.weight ?? 1.0, 1e-6) }
             let v3LogMin = log((v3InvW.min() ?? 0.01) + 0.001)
             let v3LogMax = log((v3InvW.max() ?? 1.0) + 0.001)
@@ -567,22 +548,6 @@ private struct SnapDebugMapView: UIViewRepresentable {
 
             var circles: [CircleAnnotation] = []
 
-            // v1 orange dots, dark = high 1/weight (far from anchor = low quality)
-            for (i, obs) in v1obs.enumerated() {
-                let invW = 1.0 / max(obs.weight ?? 1.0, 1e-6)
-                let t = (log(invW + 0.001) - v1LogMin) / v1LogRange  // 0=good, 1=bad
-                let r = 1.0 - t * 0.7
-                let g = 0.5 - t * 0.35
-                var a = CircleAnnotation(id: "v1-\(i)",
-                    centerCoordinate: CLLocationCoordinate2D(latitude: obs.lat, longitude: obs.lon))
-                a.circleColor       = StyleColor(UIColor(red: r, green: g, blue: 0.0, alpha: 0.8))
-                a.circleRadius      = 4
-                a.circleStrokeColor = StyleColor(UIColor(red: r * 0.5, green: g * 0.5, blue: 0.0, alpha: 0.5))
-                a.circleStrokeWidth = 1
-                circles.append(a)
-            }
-
-            // v3 blue dots, dark = high 1/weight (far from anchor = low quality)
             for (i, obs) in v3obs.enumerated() {
                 let invW = 1.0 / max(obs.weight ?? 1.0, 1e-6)
                 let t = (log(invW + 0.001) - v3LogMin) / v3LogRange  // 0=good, 1=bad
@@ -618,10 +583,9 @@ private struct SnapDebugMapView: UIViewRepresentable {
             line.lineWidth = 2.5
             polylineMgr?.annotations = [line]
 
-            // Purple lines: anchor A → observation → anchor B (v2 only, first 20)
+            // Purple lines: anchor A → observation → anchor B (v3, first 20)
             var anchorLines: [PolylineAnnotation] = []
-            let v2obs = observations.filter { ($0.weightVersion ?? 1) == 2 }.prefix(20)
-            for (i, obs) in v2obs.enumerated() {
+            for (i, obs) in v3obs.prefix(20).enumerated() {
                 guard let bLat = obs.ancBeforeLat, let bLon = obs.ancBeforeLon,
                       let aLat = obs.ancAfterLat,  let aLon = obs.ancAfterLon else { continue }
                 let obsCoord    = CLLocationCoordinate2D(latitude: obs.lat, longitude: obs.lon)
