@@ -47,11 +47,42 @@ The server listens on `http://localhost:8080`. On a physical device, update the 
 
 ```
 GET /trains?lat=57.06&lon=-4.12&radius=50   — trains within radius (km)
-GET /trains/stats                            — connection/tracking stats, v1/v3 observation counts
+GET /trains/stats                            — connection/tracking stats, observation counts
 GET /trains/snap_log                         — recent 200 snap-to-rail corrections (sorted by distance in app)
 GET /trains/weight_versions                  — descriptions of each observation weight formula version
 GET /trains/recalc_weights                   — trigger immediate weight recomputation for all learned berths
 GET /trains/debug_state?headcode=1A23        — internal anchor/interpolation state for a specific train
+```
+
+**Useful curl one-liners**
+
+```bash
+# Check server health
+curl http://localhost:8080/trains/stats | python3 -m json.tool
+
+# Recompute all learned berth positions from stored observations
+curl http://localhost:8080/trains/recalc_weights
+
+# Show worst snap corrections (pipe through jq or python for readability)
+curl http://localhost:8080/trains/snap_log | python3 -c "
+import json,sys
+rows=json.load(sys.stdin)
+rows.sort(key=lambda r: r.get('distance_m',0), reverse=True)
+for r in rows[:20]: print(f\"{r['distance_m']:5d}m  {r['area']}:{r['berth']}  {r['source']}  {r['headcode']}\")
+"
+
+# Inspect a specific train's interpolation state
+curl "http://localhost:8080/trains/debug_state?headcode=1A23" | python3 -m json.tool
+```
+
+**Analysis scripts**
+
+```bash
+# Detailed berth analysis with scatter plot saved to /tmp/
+python3 server/berth_analysis.py G2:5901
+
+# Empirical weight validation against corpus ground truth
+python3 server/analyse_weights.py
 ```
 
 ## Geographic coverage
