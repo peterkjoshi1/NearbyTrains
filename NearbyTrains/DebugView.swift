@@ -18,6 +18,11 @@ struct ServerStats: Decodable {
     let trainsWith_coords: Int?
     let learnedBerths: Int
     let railSegments: Int
+    let totalBerths: Int?
+    let berthsV1Only: Int?
+    let berthsWithV3: Int?
+    let v1Observations: Int?
+    let v3Observations: Int?
 
     enum CodingKeys: String, CodingKey {
         case stompMessages   = "stomp_messages"
@@ -29,6 +34,11 @@ struct ServerStats: Decodable {
         case trainsWith_coords = "trains_with_coords"
         case learnedBerths   = "learned_berths"
         case railSegments    = "rail_segments"
+        case totalBerths     = "total_berths"
+        case berthsV1Only    = "berths_v1_only"
+        case berthsWithV3    = "berths_with_v3"
+        case v1Observations  = "v1_observations"
+        case v3Observations  = "v3_observations"
     }
 
     var trainsWithCoords: Int { trainsWith_coords ?? 0 }
@@ -183,6 +193,12 @@ struct DebugView: View {
             stat("Snap corrections",  "\(s.snapHits)")
             stat("Learned berths",    "\(s.learnedBerths)")
             stat("Rail segments",     "\(s.railSegments)")
+            if let total = s.totalBerths, let v3 = s.berthsWithV3, let v1only = s.berthsV1Only {
+                stat("v3 coverage", "\(v3)/\(total) berths (\(v1only) v1-only)")
+            }
+            if let v1 = s.v1Observations, let v3 = s.v3Observations {
+                stat("Observations", "v1: \(v1)  v3: \(v3)")
+            }
         }
         if !service.weightVersions.isEmpty {
             Section("Weight versions") {

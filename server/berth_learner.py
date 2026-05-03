@@ -187,6 +187,26 @@ class BerthLearner:
     def learned_count(self) -> int:
         return len(self._cache)
 
+    def obs_version_stats(self) -> dict:
+        """Return v1/v3 observation and berth coverage counts."""
+        row = self._db.execute("""
+            SELECT
+                COUNT(DISTINCT area_id || ':' || berth_id)                                        AS total_berths,
+                SUM(CASE WHEN weight_version = 1 THEN 1 ELSE 0 END)                               AS v1_obs,
+                SUM(CASE WHEN weight_version = 3 THEN 1 ELSE 0 END)                               AS v3_obs,
+                COUNT(DISTINCT CASE WHEN weight_version = 3 THEN area_id || ':' || berth_id END)  AS berths_with_v3,
+                COUNT(DISTINCT CASE WHEN weight_version = 1 THEN area_id || ':' || berth_id END)  AS berths_with_v1
+            FROM berth_observations
+        """).fetchone()
+        total, v1_obs, v3_obs, berths_v3, berths_v1 = row
+        return {
+            "total_berths":    total,
+            "berths_v1_only":  berths_v1 - berths_v3,
+            "berths_with_v3":  berths_v3,
+            "v1_observations": v1_obs,
+            "v3_observations": v3_obs,
+        }
+
     def debug_state(self, headcode: str = None) -> dict:
         """Return internal anchor/pending state for diagnosis via HTTP."""
         def fmt(ts):

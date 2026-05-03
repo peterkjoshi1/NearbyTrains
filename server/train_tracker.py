@@ -94,6 +94,32 @@ _stats_lock = threading.Lock()
 _snap_log: collections.deque = collections.deque(maxlen=200)
 _snap_log_lock = threading.Lock()
 
+def _seed_corpus_snap_log(lookup):
+    """Pre-populate snap log with corpus berths that have large snap corrections."""
+    candidates = []
+    for area, berth, lat, lon in lookup.all_corpus_berths():
+        snapped_lat, snapped_lon, snap_dist = snap_to_rail.snap(lat, lon)
+        if snap_dist < snap_to_rail.MAX_SNAP_KM:
+            candidates.append((snap_dist, area, berth, lat, lon, snapped_lat, snapped_lon))
+    candidates.sort(reverse=True)
+    now = time.time()
+    with _snap_log_lock:
+        for snap_dist, area, berth, lat, lon, slat, slon in candidates[:60]:
+            _snap_log.append({
+                "headcode":    "—",
+                "area":        area,
+                "berth":       berth,
+                "source":      "corpus",
+                "raw_lat":     lat,
+                "raw_lon":     lon,
+                "snapped_lat": slat,
+                "snapped_lon": slon,
+                "distance_m":  round(snap_dist * 1000),
+                "timestamp":   now,
+            })
+    print(f"[INIT]  Seeded snap log with {min(len(candidates), 60)} corpus berths "
+          f"(worst snap: {candidates[0][0]*1000:.0f}m)" if candidates else "[INIT]  No corpus snap candidates")
+
 _last_message_time = time.time()   # updated on every STOMP message received
 WATCHDOG_TIMEOUT = 120             # reconnect if silent for this many seconds
 _learner: "BerthLearner | None" = None  # set in main()
@@ -258,12 +284,14 @@ class Handler(BaseHTTPRequestHandler):
             with_coords = sum(1 for p in positions.values() if p["lat"] is not None)
         with _stats_lock:
             s = dict(stats)
+        obs_stats = _learner.obs_version_stats() if _learner else {}
         self._json({
             **s,
             "tracked_trains":     total,
             "trains_with_coords": with_coords,
             "learned_berths":     _learner.learned_count if _learner else 0,
             "rail_segments":      len(snap_to_rail._polylines),
+            **obs_stats,
         })
 
     def _snap_log(self):
@@ -546,6 +574,8 @@ def main():
                      daemon=True, name="bg").start()
     threading.Thread(target=_learner.recalc_weights,
                      daemon=True, name="recalc-weights").start()
+    threading.Thread(target=_seed_corpus_snap_log, args=(lookup,),
+                     daemon=True, name="corpus-seed").start()
 
     server = HTTPServer(("0.0.0.0", HTTP_PORT), Handler)
     print(f"[HTTP]  http://localhost:{HTTP_PORT}/trains?lat=57.06&lon=-4.12&radius=50")

@@ -47,7 +47,11 @@ The server listens on `http://localhost:8080`. On a physical device, update the 
 
 ```
 GET /trains?lat=57.06&lon=-4.12&radius=50   — trains within radius (km)
-GET /trains/stats                            — connection and tracking stats
+GET /trains/stats                            — connection/tracking stats, v1/v3 observation counts
+GET /trains/snap_log                         — recent 200 snap-to-rail corrections (sorted by distance in app)
+GET /trains/weight_versions                  — descriptions of each observation weight formula version
+GET /trains/recalc_weights                   — trigger immediate weight recomputation for all learned berths
+GET /trains/debug_state?headcode=1A23        — internal anchor/interpolation state for a specific train
 ```
 
 ## Geographic coverage
