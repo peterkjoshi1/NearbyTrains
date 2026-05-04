@@ -146,17 +146,46 @@ Tapping any snap-correction entry opens a map showing the raw position, the snap
 
 ## Potential improvements
 
-### Use corpus to seed or constrain learning
-Currently the learner ignores berths that have corpus entries. A better approach would be to use corpus positions as a strong prior — if a berth has a corpus entry and observations are accumulating nearby, the learned centroid should be anchored to the corpus position rather than free-floating. This would catch cases where interpolation is consistently going wrong and producing a learned position far from the known corpus location.
+### OSM routing graph (foundation)
 
-### Smooth interpolated positions between updates
-Positions jump discretely each time a new berth step fires (every few seconds in busy areas). A Kalman filter or simple dead-reckoning model could smooth motion between updates using the train's last known speed and heading.
+Build a routable graph from the existing OSM rail geometry using `networkx`. Nodes at junctions, edges are track segments with full polyline geometry. This is the prerequisite for path interpolation, speed correction, and Highland positioning.
 
-### Cluster-aware learning for shared berth IDs
-Some berth IDs appear on multiple routes that pass through the same signalling area. Observations for these berths can form two geographic clusters. The current outlier-rejection approach picks the dominant cluster and suppresses the other, but a better approach would be to detect bimodal distributions and maintain two separate learned positions, choosing between them based on the train's recent history.
+### Track-curve-aware interpolation
+
+Replace straight-line lat/lon interpolation between TRUST anchors with arc-length interpolation along the OSM track path. The interpolated position stays on the rail by construction — no snap correction needed. Biggest win on curved routes (Glasgow approaches, coastal lines).
+
+### ML speed-correction model
+
+Trains don't travel at constant speed between timing points — they accelerate out of stations and brake into them. The time-linear interpolation fraction `t` is therefore wrong, especially near anchors.
+
+- **Shadow-learn corpus berths**: run the learner on berths that already have a known corpus position (currently skipped), recording observations without serving them as positions
+- **Training data**: for each shadow-learned berth, the interpolated centroid is the prediction and the corpus position is the label; compute the true arc-length fraction along the OSM path
+- **Model**: learn `t → t′` correction (isotonic regression or polynomial); features include segment length, dt_before, dt_after, time of day
+- **Apply**: correct the interpolation fraction for non-corpus berths before computing weighted centroid
+
+### GPX ground-truth collection
+
+Sitting on a train with a GPX logger running and cross-referencing GPS timestamps against TD berth step timestamps (server already records `observed_at`) gives near-exact ground truth for each berth traversed — no interpolation, no corpus approximation.
+
+- One Edinburgh–Glasgow run ≈ 50–100 ground-truthed berths in 50 minutes
+- Better training labels than corpus positions (which are STANOX-level, not berth-level)
+- Also validates OSM geometry — a large snap distance means the OSM track is drawn wrong at that point
+- Note: berth step fires at circuit entry, not midpoint — record entry and exit times and take the midpoint position
+
+### Route context for path selection at junctions
+
+A berth is one fixed physical location, but may be bracketed by different TRUST anchor pairs depending on which route a train came from. The sequence of recent TRUST STANOXes identifies which branch of a junction the train is on, allowing the correct OSM path to be chosen for interpolation.
+
+### Real-time continuous position predictor
+
+Once path interpolation and speed correction exist, position can be predicted at any moment — not just when a berth step fires. Given last known TRUST position, elapsed time, and a learned speed profile, the train can be walked along the track path continuously. Trains would appear to glide rather than jump between berth steps.
+
+### Highland and RETB lines
+
+No TD berths exist on the Highland Mainline, Far North Line, West Highland Line, or Kyle/Oban branches (RETB signalling). With path interpolation between TRUST timing points and a speed model, trains on these routes could be shown moving between stations. Speed profiles trained on central belt data may generalise to Highland segments with similar characteristics.
+
+**Suggested build order**: OSM routing graph → path interpolation → shadow-learn corpus berths → ML speed correction → GPX validation → continuous predictor → Highland lines
 
 ### Expand TD coverage
-The server currently subscribes to the Scottish TD areas. Coverage could be extended to other regions of Great Britain by subscribing to additional STOMP topics and expanding the snap-to-rail geometry bounding box.
 
-### Highland interpolation using public timetable
-For RETB lines with no TD coverage, trains could be interpolated between TRUST timing points using the public timetable. If a train is scheduled to take 45 minutes from Pitlochry to Blair Atholl and a TRUST event confirms it departed Pitlochry on time, its position at any moment can be estimated by interpolating along the known route geometry.
+The server currently subscribes to the Scottish TD areas. Coverage could be extended to other regions of Great Britain by subscribing to additional STOMP topics and expanding the snap-to-rail geometry bounding box.
