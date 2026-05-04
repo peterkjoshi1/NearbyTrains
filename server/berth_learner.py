@@ -480,18 +480,22 @@ class BerthLearner:
         lat_m = 111_320.0
         lon_m = 111_320.0 * math.cos(math.radians(avg_lat))
 
-        sd_m = math.sqrt(
-            sum((r[0] - avg_lat) ** 2 * lat_m ** 2 +
-                (r[1] - avg_lon) ** 2 * lon_m ** 2
-                for r in rows) / n
-        )
+        dists_sq = [(r[0] - avg_lat) ** 2 * lat_m ** 2 +
+                    (r[1] - avg_lon) ** 2 * lon_m ** 2
+                    for r in rows]
+
+        # Unweighted SD
+        sd_m = math.sqrt(sum(dists_sq) / n)
+
+        # Weighted SD: Σ(w·d²)/Σw  — high-weight obs drive the spread
+        wsd_m = math.sqrt(sum(r[2] * d for r, d in zip(rows, dists_sq)) / total_w) if total_w > 0 else sd_m
+
+        # Effective observation count: (Σw)²/Σ(w²)
+        sum_w2 = sum(r[2] ** 2 for r in rows)
+        n_eff = (total_w ** 2 / sum_w2) if sum_w2 > 0 else n
 
         # IQR of per-observation distances from the centroid
-        dists = sorted(
-            math.sqrt((r[0] - avg_lat) ** 2 * lat_m ** 2 +
-                      (r[1] - avg_lon) ** 2 * lon_m ** 2)
-            for r in rows
-        )
+        dists = sorted(math.sqrt(d) for d in dists_sq)
         if n >= 4:
             q1, _, q3 = statistics.quantiles(dists, n=4)
             iqr_m = q3 - q1
@@ -519,10 +523,10 @@ class BerthLearner:
                 prev = self._cache.get((area_id, berth_id))
                 kept = f" — keeping ({prev[0]:.4f},{prev[1]:.4f})" if prev else " — no prior position"
                 print(f"[LEARN]  {area_id}:{berth_id} — suppressed  "
-                      f"n={n}  sd={sd_m:.0f}m  iqr={iqr_m:.0f}m  "
+                      f"n={n}(n_eff={n_eff:.1f})  sd={sd_m:.0f}m  wsd={wsd_m:.0f}m  iqr={iqr_m:.0f}m  "
                       f"(ratio={ratio:.2f} — {label}){kept}")
             else:
                 self._cache[(area_id, berth_id)] = (avg_lat, avg_lon)
                 print(f"[LEARN]  {area_id}:{berth_id} → "
                       f"({avg_lat:.4f}, {avg_lon:.4f})  "
-                      f"n={n}  sd={sd_m:.0f}m  iqr={iqr_m:.0f}m")
+                      f"n={n}(n_eff={n_eff:.1f})  sd={sd_m:.0f}m  wsd={wsd_m:.0f}m  iqr={iqr_m:.0f}m")

@@ -99,14 +99,37 @@ def analyse(area_id: str, berth_id: str):
     print("  LEARNED CENTROID")
     print(f"{'─'*60}")
     if coord_row:
-        c_lat, c_lon, obs_count, sd_m, iqr_m = coord_row
-        ratio = iqr_m / sd_m if sd_m > 0 else 0
-        verdict = "bimodal" if ratio > 1.0 else "unimodal"
+        c_lat, c_lon, obs_count, sd_m, _ = coord_row
         snap_lat, snap_lon, snap_dist = snap_to_rail.snap(c_lat, c_lon)
         maps_url = f"https://maps.google.com/?q={c_lat:.5f},{c_lon:.5f}"
+
+        # Compute wSD, n_eff, IQR from raw observations
+        all_obs = db.execute(
+            "SELECT lat, lon, weight FROM berth_observations WHERE area_id=? AND berth_id=? AND weight_version=3",
+            (area_id, berth_id)
+        ).fetchall()
+        lat_m2 = 111_320.0
+        lon_m2 = 111_320.0 * math.cos(math.radians(c_lat))
+        dists_sq = [(r[0]-c_lat)**2*lat_m2**2 + (r[1]-c_lon)**2*lon_m2**2 for r in all_obs]
+        dists = sorted(math.sqrt(d) for d in dists_sq)
+        total_w2 = sum(r[2] for r in all_obs)
+        wsd_m = math.sqrt(sum(r[2]*d for r, d in zip(all_obs, dists_sq)) / total_w2) if total_w2 > 0 else sd_m
+        sum_w2 = sum(r[2]**2 for r in all_obs)
+        n_eff = (total_w2**2 / sum_w2) if sum_w2 > 0 else len(all_obs)
+        n_obs = len(dists)
+        if n_obs >= 4:
+            q1, _, q3 = statistics.quantiles(dists, n=4)
+            iqr_m = q3 - q1
+        elif n_obs >= 2:
+            iqr_m = dists[-1] - dists[0]
+        else:
+            iqr_m = 0
+        ratio = iqr_m / sd_m if sd_m > 0 else 0
+        verdict = "bimodal" if ratio > 1.0 else "unimodal"
+
         print(f"  Position:  {c_lat:.5f}, {c_lon:.5f}")
-        print(f"  Obs count: {obs_count}")
-        print(f"  SD:        {sd_m:.0f}m   IQR: {iqr_m:.0f}m   ratio={ratio:.2f} → {verdict}")
+        print(f"  Obs:       n={obs_count}  n_eff={n_eff:.1f}")
+        print(f"  SD:        {sd_m:.0f}m   wSD: {wsd_m:.0f}m   IQR: {iqr_m:.0f}m   ratio={ratio:.2f} → {verdict}")
         print(f"  Snap:      {snap_dist*1000:.0f}m → {snap_lat:.5f}, {snap_lon:.5f}")
         print(f"  Maps:      {maps_url}")
     else:
