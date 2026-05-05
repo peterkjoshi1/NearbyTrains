@@ -4,44 +4,90 @@ A SwiftUI iOS app showing live Scottish National Rail station departures and tra
 
 **[Full description →](docs/index.html)**
 
-## Setup
+## Quick start
 
-### iOS App
+### What you need
 
-1. Copy `Secrets.xcconfig.example` to `Secrets.xcconfig` in the project root
-2. Fill in your Mapbox public token from https://account.mapbox.com
-3. Fill in your RTT refresh token from https://api-portal.rtt.io
-4. Open `NearbyTrains.xcodeproj` and build
+- macOS with Xcode 15 or later
+- Python 3.10 or later
+- Three free accounts (links below)
 
-### Train Position Server
+### 1. Get accounts and tokens
 
-The server connects to the Network Rail TD STOMP feed and serves a REST API for live train positions.
+| Service | Purpose | Link |
+|---|---|---|
+| Network Rail Open Data | TD + TRUST live feeds | https://publicdatafeeds.networkrail.co.uk |
+| Mapbox | Map tiles | https://account.mapbox.com |
+| Realtime Trains (RTT) | Station departure boards | https://api-portal.rtt.io |
 
-**Requirements**
+From Mapbox, copy your **public token** (starts with `pk.`).
+From RTT, generate a **refresh token** under API Access.
+Network Rail gives you a username and password on registration.
+
+### 2. Clone and install
 
 ```bash
-pip install stomp.py
+git clone https://github.com/peterkjoshi1/NearbyTrains.git
+cd NearbyTrains
+pip3 install stomp.py
 ```
 
-**Credentials**
-
-Register for a free account at https://publicdatafeeds.networkrail.co.uk, then:
+### 3. Configure the server
 
 ```bash
 mkdir -p ~/Library/Application\ Support/NearbyTrains
 cp server/credentials.example ~/Library/Application\ Support/NearbyTrains/credentials
 ```
 
-Edit `~/Library/Application Support/NearbyTrains/credentials` and fill in your username and password.
+Edit `~/Library/Application Support/NearbyTrains/credentials`:
 
-**Running**
+```
+NR_USERNAME=your_network_rail_username
+NR_PASSWORD=your_network_rail_password
+```
+
+### 4. Start the server
 
 ```bash
-cd /path/to/NearbyTrains
 python3 server/train_tracker.py
 ```
 
-The server listens on `http://localhost:8080`. On a physical device, update the IP address in `NearbyTrains/TrainPositionService.swift` to your Mac's local IP.
+You should see `[INIT] Ready.` within a few seconds. Verify it is working:
+
+```bash
+curl http://localhost:8080/trains/stats | python3 -m json.tool
+```
+
+The server listens on port 8080 and keeps running in that terminal. Leave it open.
+
+### 5. Configure the iOS app
+
+```bash
+cp Secrets.xcconfig.example Secrets.xcconfig
+```
+
+Edit `Secrets.xcconfig` and fill in your tokens:
+
+```
+MAPBOX_TOKEN = pk.your_mapbox_public_token_here
+RTT_REFRESH_TOKEN = your_rtt_refresh_token_here
+```
+
+### 6. Point the app at localhost
+
+Open `NearbyTrains/TrainPositionService.swift` and change line 12 to:
+
+```swift
+static let serverBase = "http://localhost:8080"
+```
+
+(The iOS Simulator on your Mac can reach the server at `localhost`. On a physical device, use your Mac's LAN IP instead, e.g. `http://192.168.1.x:8080`.)
+
+### 7. Build and run
+
+Open `NearbyTrains.xcodeproj` in Xcode. Select an iPhone simulator from the device picker, then press **Run** (⌘R). The map should appear and trains should start populating within a minute or so as berth-step messages arrive from Network Rail.
+
+> **Note:** The berth learner starts with a pre-built database of observed positions (`server/berth_learned.db`), so most Scottish central-belt berths will resolve immediately. The learned positions improve passively as more trains are observed.
 
 **API**
 
