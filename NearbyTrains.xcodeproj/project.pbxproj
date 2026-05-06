@@ -11,11 +11,13 @@
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
-		D01EA8402FA3000000000001 /* Secrets.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; name = Secrets.xcconfig; path = Secrets.xcconfig; sourceTree = "<group>"; };
-		D01EA8402FA3000000000002 /* Secrets.xcconfig.example */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; name = Secrets.xcconfig.example; path = Secrets.xcconfig.example; sourceTree = "<group>"; };
 		D01EA76B2F9F87160088CBB5 /* NearbyTrains.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = NearbyTrains.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		D01EA7952F9F8EF50088CBB5 /* newtonmore.gpx */ = {isa = PBXFileReference; lastKnownFileType = text.xml; name = newtonmore.gpx; path = ../../../../../../Desktop/newtonmore.gpx; sourceTree = "<group>"; };
 		D01EA8302FA1018A0088CBB5 /* glasgow.gpx */ = {isa = PBXFileReference; lastKnownFileType = text.xml; name = glasgow.gpx; path = ../../../../../../Desktop/glasgow.gpx; sourceTree = "<group>"; };
+		D01EA8402FA3000000000001 /* Secrets.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = Secrets.xcconfig; sourceTree = "<group>"; };
+		D01EA8402FA3000000000002 /* Secrets.xcconfig.example */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = Secrets.xcconfig.example; sourceTree = "<group>"; };
+		D09295222FABC59700F9AA98 /* Glasgow.gpx */ = {isa = PBXFileReference; lastKnownFileType = text.xml; name = Glasgow.gpx; path = GPX/Glasgow.gpx; sourceTree = "<group>"; };
+		D09295232FABC5A400F9AA98 /* Newtonmore.gpx */ = {isa = PBXFileReference; lastKnownFileType = text.xml; name = Newtonmore.gpx; path = GPX/Newtonmore.gpx; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
@@ -54,6 +56,8 @@
 		D01EA7622F9F87160088CBB5 = {
 			isa = PBXGroup;
 			children = (
+				D09295232FABC5A400F9AA98 /* Newtonmore.gpx */,
+				D09295222FABC59700F9AA98 /* Glasgow.gpx */,
 				D01EA8402FA3000000000001 /* Secrets.xcconfig */,
 				D01EA8402FA3000000000002 /* Secrets.xcconfig.example */,
 				D01EA8302FA1018A0088CBB5 /* glasgow.gpx */,
