@@ -8,3 +8,6 @@ server/coord_cache.json
 server/corpus_data.json
 server/smart_data.json
 server/highland_rail.json
+*.venv
+*.claude
+NearbyTrains.xcodeproj/xcuserdata/*
