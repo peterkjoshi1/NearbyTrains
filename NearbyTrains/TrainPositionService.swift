@@ -9,7 +9,7 @@ import CoreLocation
 @Observable
 @MainActor
 final class TrainPositionService {
-    static let serverBase = "http://192.168.1.102:8080"
+    static let serverBase = "http://localhost:8080"
 
     var trains: [LiveTrain] = []
 
