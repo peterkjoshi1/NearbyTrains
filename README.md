@@ -105,7 +105,7 @@ GET /trains?lat=57.06&lon=-4.12&radius=50   — trains within radius (km)
 GET /trains/stats                            — connection/tracking stats, observation counts
 GET /trains/snap_log                         — recent 200 snap-to-rail corrections (sorted by distance in app)
 GET /trains/weight_versions                  — descriptions of each observation weight formula version
-GET /trains/recalc_weights                   — trigger immediate weight recomputation for all learned berths
+GET /trains/rebuild_positions                   — recompute all learned berth centroids from stored observations
 GET /trains/debug_state?headcode=1A23        — internal anchor/interpolation state for a specific train
 ```
 
@@ -116,7 +116,7 @@ GET /trains/debug_state?headcode=1A23        — internal anchor/interpolation s
 curl http://localhost:8080/trains/stats | python3 -m json.tool
 
 # Recompute all learned berth positions from stored observations
-curl http://localhost:8080/trains/recalc_weights
+curl http://localhost:8080/trains/rebuild_positions
 
 # Show worst snap corrections (pipe through jq or python for readability)
 curl http://localhost:8080/trains/snap_log | python3 -c "

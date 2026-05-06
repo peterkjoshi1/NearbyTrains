@@ -263,8 +263,8 @@ class Handler(BaseHTTPRequestHandler):
             self._skip_log()
         elif parsed.path == "/trains/berth_observations":
             self._berth_observations(parsed.query)
-        elif parsed.path == "/trains/recalc_weights":
-            self._recalc_weights()
+        elif parsed.path == "/trains/rebuild_positions":
+            self._rebuild_positions()
         elif parsed.path == "/trains/weight_versions":
             self._json(_learner.weight_versions() if _learner else [])
         elif parsed.path == "/trains/debug":
@@ -306,8 +306,8 @@ class Handler(BaseHTTPRequestHandler):
     def _skip_log(self):
         self._json(_learner.skip_list() if _learner else [])
 
-    def _recalc_weights(self):
-        self._json(_learner.recalc_weights() if _learner else {"error": "learner not ready"})
+    def _rebuild_positions(self):
+        self._json(_learner.rebuild_positions() if _learner else {"error": "learner not ready"})
 
     def _berth_observations(self, qs: str):
         params = urllib.parse.parse_qs(qs)
@@ -588,7 +588,7 @@ def main():
 
     threading.Thread(target=background_loop, args=(td_conn, username, password),
                      daemon=True, name="bg").start()
-    threading.Thread(target=_learner.recalc_weights,
+    threading.Thread(target=_learner.rebuild_positions,
                      daemon=True, name="recalc-weights").start()
     threading.Thread(target=_seed_corpus_snap_log, args=(lookup,),
                      daemon=True, name="corpus-seed").start()

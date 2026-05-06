@@ -158,20 +158,27 @@ class BerthLearner:
         lon       = before[2] + frac * (after[2] - before[2])
         dt_before = timestamp - before[0]
         dt_after  = after[0] - timestamp
-        # Weight = 1/dt_before_min + 1/dt_after_min
-        # Linear inverse of minutes to nearest TRUST anchor on each side.
-        # High when berth step fires close to either anchor (position well-constrained).
+        # Weight = (1/dt_before_min + 1/dt_after_min) / speed_km_per_min
+        # Distance-based: dividing by speed means fast trains (more position uncertainty
+        # per unit time) are downweighted relative to slow trains.
         dt_before_min = max(dt_before / 60.0, 1.0 / 60.0)
         dt_after_min  = max(dt_after  / 60.0, 1.0 / 60.0)
-        weight = 1.0 / dt_before_min + 1.0 / dt_after_min
         anc_b_lat, anc_b_lon = before[1], before[2]
         anc_a_lat, anc_a_lon = after[1],  after[2]
         anc_b_stanox = before[3] if len(before) > 3 else ""
         anc_a_stanox = after[3]  if len(after)  > 3 else ""
+        segment_km = _haversine_km(anc_b_lat, anc_b_lon, anc_a_lat, anc_a_lon)
+        total_min  = dt_before_min + dt_after_min
+        time_weight = 1.0 / dt_before_min + 1.0 / dt_after_min
+        if segment_km > 0.1 and total_min > 0:
+            speed_km_per_min = segment_km / total_min
+            weight = time_weight / speed_km_per_min
+        else:
+            weight = time_weight  # fallback: anchors too close together to estimate speed
         threading.Thread(
             target=self._record,
             args=(area_id, berth_id, lat, lon, None, int(timestamp),
-                  weight, 3, dt_before, dt_after,
+                  weight, 4, dt_before, dt_after,
                   anc_b_lat, anc_b_lon, anc_b_stanox,
                   anc_a_lat, anc_a_lon, anc_a_stanox),
             daemon=True,
@@ -188,18 +195,22 @@ class BerthLearner:
         return len(self._cache)
 
     def obs_version_stats(self) -> dict:
-        """Return v3 observation and berth coverage counts."""
+        """Return v3/v4 observation and berth coverage counts."""
         row = self._db.execute("""
             SELECT
-                COUNT(DISTINCT area_id || ':' || berth_id) AS berths_with_v3,
-                COUNT(*)                                   AS v3_obs
+                COUNT(DISTINCT area_id || ':' || berth_id) AS berths,
+                COUNT(*)                                   AS obs
             FROM berth_observations
-            WHERE weight_version = 3
+            WHERE weight_version IN (3, 4)
         """).fetchone()
-        berths_v3, v3_obs = row
+        berths, obs = row
+        v4_row = self._db.execute(
+            "SELECT COUNT(*) FROM berth_observations WHERE weight_version=4"
+        ).fetchone()
         return {
-            "berths_with_v3":  berths_v3,
-            "v3_observations": v3_obs,
+            "berths_with_observations": berths,
+            "total_observations":       obs,
+            "v4_observations":          v4_row[0],
         }
 
     def debug_state(self, headcode: str = None) -> dict:
@@ -232,15 +243,14 @@ class BerthLearner:
             entry["last_ts"] = ts
             entry["reason"] = reason
 
-    def recalc_weights(self) -> dict:
-        """Recompute weights for all berths using IRLS (iterative reweighted least squares).
+    def rebuild_positions(self) -> dict:
+        """Recompute centroids for all berths with v3/v4 observations.
 
         Observations near the converged centroid get high weight; outliers get low weight.
-        Runs for every berth that has any observation with weight=1.0 (legacy/uncomputed).
         Returns stats.
         """
         rows = self._db.execute(
-            "SELECT DISTINCT area_id, berth_id FROM berth_observations WHERE weight = 1.0"
+            "SELECT DISTINCT area_id, berth_id FROM berth_observations WHERE weight_version IN (3,4)"
         ).fetchall()
 
         updated = 0
@@ -264,7 +274,7 @@ class BerthLearner:
                 self._recompute(area_id, berth_id)
             updated += 1
 
-        print(f"[LEARN]  recalc_weights: updated {updated} / {len(rows)} berths")
+        print(f"[LEARN]  rebuild_positions: updated {updated} / {len(rows)} berths")
         return {"berths_updated": updated, "total_berths": len(rows)}
 
     def _irls_weights(self, lats: list[float], lons: list[float],
@@ -354,6 +364,11 @@ class BerthLearner:
                  "Inverse minutes to nearest TRUST anchor on each side (linear, not squared). "
                  "Formula: 1/dt_before_min + 1/dt_after_min",
                  0),
+                (4, "dist_anchors",
+                 "Distance-based: time weight divided by estimated speed. "
+                 "Downweights fast trains (more position uncertainty per unit time). "
+                 "Formula: (1/dt_before_min + 1/dt_after_min) / (segment_km / total_min)",
+                 1),
             ]
         )
         conn.execute("""
@@ -458,10 +473,10 @@ class BerthLearner:
 
     # β multiplier: v2 observations count this many times more than v1 in the blend
     def _recompute(self, area_id: str, berth_id: str) -> None:
-        """Recompute position from v3 observations using weighted centroid (weight = 1/dt_min)."""
+        """Recompute position from v4 (or v3) observations using weighted centroid."""
         rows = self._db.execute(
             "SELECT lat, lon, weight FROM berth_observations "
-            "WHERE area_id=? AND berth_id=? AND weight_version=3",
+            "WHERE area_id=? AND berth_id=? AND weight_version IN (3,4)",
             (area_id, berth_id)
         ).fetchall()
 
