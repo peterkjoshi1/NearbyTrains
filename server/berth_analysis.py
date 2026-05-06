@@ -105,7 +105,7 @@ def analyse(area_id: str, berth_id: str):
 
         # Compute wSD, n_eff, IQR from raw observations
         all_obs = db.execute(
-            "SELECT lat, lon, weight FROM berth_observations WHERE area_id=? AND berth_id=? AND weight_version=3",
+            "SELECT lat, lon, weight FROM berth_observations WHERE area_id=? AND berth_id=?",
             (area_id, berth_id)
         ).fetchall()
         lat_m2 = 111_320.0
@@ -141,7 +141,7 @@ def analyse(area_id: str, berth_id: str):
         "SELECT lat, lon, weight, dt_before, dt_after, "
         "       anc_before_stanox, anc_after_stanox, observed_at "
         "FROM berth_observations "
-        "WHERE area_id=? AND berth_id=? AND weight_version=3 "
+        "WHERE area_id=? AND berth_id=? "
         "ORDER BY weight DESC",
         (area_id, berth_id)
     ).fetchall()

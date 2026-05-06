@@ -18,21 +18,23 @@ struct ServerStats: Decodable {
     let trainsWith_coords: Int?
     let learnedBerths: Int
     let railSegments: Int
-    let berthsWithV3: Int?
-    let v3Observations: Int?
+    let berthsWithObservations: Int?
+    let totalObservations: Int?
+    let v4Observations: Int?
 
     enum CodingKeys: String, CodingKey {
-        case stompMessages   = "stomp_messages"
-        case caMsgs          = "ca_msgs"
-        case positionUpdates = "position_updates"
-        case trustAnchors    = "trust_anchors"
-        case snapHits        = "snap_hits"
-        case trackedTrains   = "tracked_trains"
-        case trainsWith_coords = "trains_with_coords"
-        case learnedBerths   = "learned_berths"
-        case railSegments    = "rail_segments"
-        case berthsWithV3    = "berths_with_v3"
-        case v3Observations  = "v3_observations"
+        case stompMessages         = "stomp_messages"
+        case caMsgs                = "ca_msgs"
+        case positionUpdates       = "position_updates"
+        case trustAnchors          = "trust_anchors"
+        case snapHits              = "snap_hits"
+        case trackedTrains         = "tracked_trains"
+        case trainsWith_coords     = "trains_with_coords"
+        case learnedBerths         = "learned_berths"
+        case railSegments          = "rail_segments"
+        case berthsWithObservations = "berths_with_observations"
+        case totalObservations     = "total_observations"
+        case v4Observations        = "v4_observations"
     }
 
     var trainsWithCoords: Int { trainsWith_coords ?? 0 }
@@ -112,8 +114,8 @@ class DebugService {
         isLoading = false
     }
 
-    func recalcWeights() async {
-        _ = try? await fetch(path: "trains/recalc_weights")
+    func rebuildPositions() async {
+        _ = try? await fetch(path: "trains/rebuild_positions")
         await load()
     }
 
@@ -153,7 +155,7 @@ struct DebugView: View {
                 ToolbarItem(placement: .topBarTrailing) {
                     HStack {
                         Button {
-                            Task { await service.recalcWeights() }
+                            Task { await service.rebuildPositions() }
                         } label: {
                             Image(systemName: "wand.and.stars")
                         }
@@ -187,8 +189,9 @@ struct DebugView: View {
             stat("Snap corrections",  "\(s.snapHits)")
             stat("Learned berths",    "\(s.learnedBerths)")
             stat("Rail segments",     "\(s.railSegments)")
-            if let v3 = s.berthsWithV3 { stat("Berths learned (v3)", "\(v3)") }
-            if let v3 = s.v3Observations { stat("v3 observations", "\(v3)") }
+            if let n = s.berthsWithObservations { stat("Berths with observations", "\(n)") }
+            if let n = s.totalObservations { stat("Total observations", "\(n)") }
+            if let n = s.v4Observations { stat("v4 observations", "\(n)") }
         }
         if !service.weightVersions.isEmpty {
             Section("Weight versions") {
@@ -539,20 +542,19 @@ private struct SnapDebugMapView: UIViewRepresentable {
             let rawCoord     = CLLocationCoordinate2D(latitude: correction.rawLat,     longitude: correction.rawLon)
             let snappedCoord = CLLocationCoordinate2D(latitude: correction.snappedLat, longitude: correction.snappedLon)
 
-            // v3 blue dots, log-normalised by 1/weight (dark = high 1/w = low quality)
-            let v3obs = observations.filter { ($0.weightVersion ?? 1) == 3 }
-            let v3InvW = v3obs.map { 1.0 / max($0.weight ?? 1.0, 1e-6) }
-            let v3LogMin = log((v3InvW.min() ?? 0.01) + 0.001)
-            let v3LogMax = log((v3InvW.max() ?? 1.0) + 0.001)
-            let v3LogRange = v3LogMax > v3LogMin ? v3LogMax - v3LogMin : 1
+            // Blue dots, log-normalised by 1/weight (dark = high 1/w = low quality)
+            let invWeights = observations.map { 1.0 / max($0.weight ?? 1.0, 1e-6) }
+            let logMin = log((invWeights.min() ?? 0.01) + 0.001)
+            let logMax = log((invWeights.max() ?? 1.0) + 0.001)
+            let logRange = logMax > logMin ? logMax - logMin : 1
 
             var circles: [CircleAnnotation] = []
 
-            for (i, obs) in v3obs.enumerated() {
+            for (i, obs) in observations.enumerated() {
                 let invW = 1.0 / max(obs.weight ?? 1.0, 1e-6)
-                let t = (log(invW + 0.001) - v3LogMin) / v3LogRange  // 0=good, 1=bad
+                let t = (log(invW + 0.001) - logMin) / logRange  // 0=good, 1=bad
                 let darkness = t * 0.8
-                var a = CircleAnnotation(id: "v3-\(i)",
+                var a = CircleAnnotation(id: "obs-\(i)",
                     centerCoordinate: CLLocationCoordinate2D(latitude: obs.lat, longitude: obs.lon))
                 a.circleColor       = StyleColor(UIColor(red: 0.3 * (1 - darkness), green: 0.6 - 0.5 * darkness, blue: 1.0 - 0.7 * darkness, alpha: 0.9))
                 a.circleRadius      = 5
@@ -583,9 +585,9 @@ private struct SnapDebugMapView: UIViewRepresentable {
             line.lineWidth = 2.5
             polylineMgr?.annotations = [line]
 
-            // Purple lines: anchor A → observation → anchor B (v3, first 20)
+            // Purple lines: anchor A → observation → anchor B (first 20)
             var anchorLines: [PolylineAnnotation] = []
-            for (i, obs) in v3obs.prefix(20).enumerated() {
+            for (i, obs) in observations.prefix(20).enumerated() {
                 guard let bLat = obs.ancBeforeLat, let bLon = obs.ancBeforeLon,
                       let aLat = obs.ancAfterLat,  let aLon = obs.ancAfterLon else { continue }
                 let obsCoord    = CLLocationCoordinate2D(latitude: obs.lat, longitude: obs.lon)

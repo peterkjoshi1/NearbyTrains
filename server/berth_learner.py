@@ -201,7 +201,6 @@ class BerthLearner:
                 COUNT(DISTINCT area_id || ':' || berth_id) AS berths,
                 COUNT(*)                                   AS obs
             FROM berth_observations
-            WHERE weight_version IN (3, 4)
         """).fetchone()
         berths, obs = row
         v4_row = self._db.execute(
@@ -250,7 +249,7 @@ class BerthLearner:
         Returns stats.
         """
         rows = self._db.execute(
-            "SELECT DISTINCT area_id, berth_id FROM berth_observations WHERE weight_version IN (3,4)"
+            "SELECT DISTINCT area_id, berth_id FROM berth_observations"
         ).fetchall()
 
         updated = 0
@@ -473,10 +472,10 @@ class BerthLearner:
 
     # β multiplier: v2 observations count this many times more than v1 in the blend
     def _recompute(self, area_id: str, berth_id: str) -> None:
-        """Recompute position from v4 (or v3) observations using weighted centroid."""
+        """Recompute position from all observations using weighted centroid."""
         rows = self._db.execute(
             "SELECT lat, lon, weight FROM berth_observations "
-            "WHERE area_id=? AND berth_id=? AND weight_version IN (3,4)",
+            "WHERE area_id=? AND berth_id=?",
             (area_id, berth_id)
         ).fetchall()
 
