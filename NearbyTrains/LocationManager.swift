@@ -25,7 +25,7 @@ class LocationManager: NSObject, CLLocationManagerDelegate {
             case .authorizedWhenInUse, .authorizedAlways:
                 manager.requestLocation()
             default:
-                continuation.resume(throwing: LocationError.denied)
+                continuation.resume(returning: LocationManager.fallbackLocation)
                 self.continuation = nil
             }
         }
@@ -37,7 +37,7 @@ class LocationManager: NSObject, CLLocationManagerDelegate {
         case .authorizedWhenInUse, .authorizedAlways:
             manager.requestLocation()
         case .denied, .restricted:
-            continuation?.resume(throwing: LocationError.denied)
+            continuation?.resume(returning: LocationManager.fallbackLocation)
             continuation = nil
         default:
             break
@@ -55,10 +55,6 @@ class LocationManager: NSObject, CLLocationManagerDelegate {
         continuation = nil
     }
 
-    enum LocationError: LocalizedError {
-        case denied
-        var errorDescription: String? {
-            "Location access denied. Please enable in Settings > NearbyTrains."
-        }
-    }
+    // Glasgow Central — used as fallback in simulator or when location is denied
+    static let fallbackLocation = CLLocation(latitude: 55.8609, longitude: -4.2514)
 }

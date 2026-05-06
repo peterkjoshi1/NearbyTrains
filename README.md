@@ -83,7 +83,16 @@ static let serverBase = "http://localhost:8080"
 
 (The iOS Simulator on your Mac can reach the server at `localhost`. On a physical device, use your Mac's LAN IP instead, e.g. `http://192.168.1.x:8080`.)
 
-### 7. Build and run
+### 7. Set simulator location
+
+The simulator has no GPS. Set it to somewhere in Scotland:
+
+In the running simulator: **Features → Location → Custom Location**
+Enter latitude `55.8609`, longitude `-4.2514` (Glasgow Central).
+
+> If you skip this step the app falls back to Glasgow Central automatically, but setting it explicitly means the OS location permission prompt works correctly.
+
+### 8. Build and run
 
 Open `NearbyTrains.xcodeproj` in Xcode. Select an iPhone simulator from the device picker, then press **Run** (⌘R). The map should appear and trains should start populating within a minute or so as berth-step messages arrive from Network Rail.
 
