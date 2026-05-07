@@ -53,6 +53,28 @@ def _haversine_km(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
          * math.sin(dlon / 2) ** 2)
     return R * 2 * math.asin(math.sqrt(a))
 
+
+def _compute_weight(dt_before: float, dt_after: float,
+                    anc_b_lat: float, anc_b_lon: float,
+                    anc_a_lat: float, anc_a_lon: float) -> float:
+    """Compute observation weight from raw timing and anchor positions.
+
+    Formula: (1/dt_before_min + 1/dt_after_min) / speed_km_per_min
+           = 1/d_before_km + 1/d_after_km
+
+    Equivalent to inverse distance to each anchor. Fast trains (more
+    position uncertainty per unit time) are naturally downweighted.
+    Falls back to time-based weight if anchors are too close to estimate speed.
+    """
+    dt_before_min = max(dt_before / 60.0, 1.0 / 60.0)
+    dt_after_min  = max(dt_after  / 60.0, 1.0 / 60.0)
+    time_weight   = 1.0 / dt_before_min + 1.0 / dt_after_min
+    segment_km    = _haversine_km(anc_b_lat, anc_b_lon, anc_a_lat, anc_a_lon)
+    total_min     = dt_before_min + dt_after_min
+    if segment_km > 0.1 and total_min > 0:
+        return time_weight / (segment_km / total_min)
+    return time_weight
+
 MAX_WINDOW_SECONDS  = 1800   # reject interpolation windows wider than 30 min
 MIN_OBSERVATIONS    = 5      # observations needed before using a learned coord
 MAX_ANCHORS         = 20     # max TRUST anchors kept per headcode in memory
@@ -158,23 +180,11 @@ class BerthLearner:
         lon       = before[2] + frac * (after[2] - before[2])
         dt_before = timestamp - before[0]
         dt_after  = after[0] - timestamp
-        # Weight = (1/dt_before_min + 1/dt_after_min) / speed_km_per_min
-        # Distance-based: dividing by speed means fast trains (more position uncertainty
-        # per unit time) are downweighted relative to slow trains.
-        dt_before_min = max(dt_before / 60.0, 1.0 / 60.0)
-        dt_after_min  = max(dt_after  / 60.0, 1.0 / 60.0)
         anc_b_lat, anc_b_lon = before[1], before[2]
         anc_a_lat, anc_a_lon = after[1],  after[2]
         anc_b_stanox = before[3] if len(before) > 3 else ""
         anc_a_stanox = after[3]  if len(after)  > 3 else ""
-        segment_km = _haversine_km(anc_b_lat, anc_b_lon, anc_a_lat, anc_a_lon)
-        total_min  = dt_before_min + dt_after_min
-        time_weight = 1.0 / dt_before_min + 1.0 / dt_after_min
-        if segment_km > 0.1 and total_min > 0:
-            speed_km_per_min = segment_km / total_min
-            weight = time_weight / speed_km_per_min
-        else:
-            weight = time_weight  # fallback: anchors too close together to estimate speed
+        weight = _compute_weight(dt_before, dt_after, anc_b_lat, anc_b_lon, anc_a_lat, anc_a_lon)
         threading.Thread(
             target=self._record,
             args=(area_id, berth_id, lat, lon, None, int(timestamp),
@@ -255,19 +265,19 @@ class BerthLearner:
         updated = 0
         for area_id, berth_id in rows:
             obs = self._db.execute(
-                "SELECT rowid, lat, lon FROM berth_observations WHERE area_id=? AND berth_id=?",
+                "SELECT rowid, dt_before, dt_after, "
+                "anc_before_lat, anc_before_lon, anc_after_lat, anc_after_lon "
+                "FROM berth_observations WHERE area_id=? AND berth_id=? "
+                "AND dt_before IS NOT NULL AND anc_before_lat IS NOT NULL",
                 (area_id, berth_id)
             ).fetchall()
-            if len(obs) < 2:
-                continue
-            lats = [r[1] for r in obs]
-            lons = [r[2] for r in obs]
-            weights = self._irls_weights(lats, lons)
             with self._lock:
-                for i, row in enumerate(obs):
+                for row in obs:
+                    rowid, dt_before, dt_after, blat, blon, alat, alon = row
+                    w = _compute_weight(dt_before, dt_after, blat, blon, alat, alon)
                     self._db.execute(
-                        "UPDATE berth_observations SET weight=? WHERE rowid=?",
-                        (weights[i], row[0])
+                        "UPDATE berth_observations SET weight=?, weight_version=4 WHERE rowid=?",
+                        (w, rowid)
                     )
                 self._db.commit()
                 self._recompute(area_id, berth_id)
