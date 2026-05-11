@@ -75,7 +75,8 @@ def _compute_weight(dt_before: float, dt_after: float,
         return time_weight / (segment_km / total_min)
     return time_weight
 
-MAX_WINDOW_SECONDS  = 1800   # reject interpolation windows wider than 30 min
+MAX_WINDOW_SECONDS  = 4500   # store observations up to 75 min window
+RECOMPUTE_MAX_WINDOW = 1800  # only use observations ≤30 min window in centroid computation
 MIN_OBSERVATIONS    = 5      # observations needed before using a learned coord
 MAX_ANCHORS         = 20     # max TRUST anchors kept per headcode in memory
 ANCHOR_JUMP_KM      = 100    # geographic jump that signals headcode reuse
@@ -482,11 +483,13 @@ class BerthLearner:
 
     # β multiplier: v2 observations count this many times more than v1 in the blend
     def _recompute(self, area_id: str, berth_id: str) -> None:
-        """Recompute position from all observations using weighted centroid."""
+        """Recompute position from observations within RECOMPUTE_MAX_WINDOW using weighted centroid.
+        Wide-window observations are stored but excluded from position computation."""
         rows = self._db.execute(
             "SELECT lat, lon, weight FROM berth_observations "
-            "WHERE area_id=? AND berth_id=?",
-            (area_id, berth_id)
+            "WHERE area_id=? AND berth_id=? "
+            "AND (dt_before + dt_after) <= ?",
+            (area_id, berth_id, RECOMPUTE_MAX_WINDOW)
         ).fetchall()
 
         if not rows:
