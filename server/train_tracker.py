@@ -113,12 +113,14 @@ def _build_learned_snap_cache(lookup):
     _berth_snap_cache = snaps
     print(f"[INIT]  Learned berth snap cache: {len(snaps)} entries")
 
-    # Build corpus list using only already-cached coordinates (no Overpass calls)
+    # Build corpus list — cached coords only, clipped to Scotland bbox
+    s, w, n, e = snap_to_rail._BBOX
     corpus = []
     for area, berth, lat, lon in lookup.all_corpus_berths_cached():
-        corpus.append((area, berth, lat, lon))
+        if s <= lat <= n and w <= lon <= e:
+            corpus.append((area, berth, lat, lon))
     _corpus_berth_list = corpus
-    print(f"[INIT]  Corpus berth list (cached coords only): {len(corpus)} entries")
+    print(f"[INIT]  Corpus berth list (Scotland only): {len(corpus)} entries")
 
 
 def _seed_corpus_snap_log(lookup):
