@@ -190,6 +190,18 @@ class BerthLookup:
             if lat is not None:
                 yield area, berth, lat, lon
 
+    def all_corpus_berths_cached(self):
+        """Like all_corpus_berths() but only uses already-cached coordinates — no network calls."""
+        for (area, berth), (stanox, _name) in self._smart_index.items():
+            crs = self._corpus_index.get(stanox)
+            if not crs:
+                continue
+            crs = crs.upper()
+            with self._cache_lock:
+                result = self._coord_cache.get(crs)
+            if result and result[0] is not None:
+                yield area, berth, result[0], result[1]
+
     # ------------------------------------------------------------------ #
     # Data loading                                                         #
     # ------------------------------------------------------------------ #

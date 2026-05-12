@@ -16,6 +16,7 @@ struct BerthSummary: Identifiable, Decodable {
     let obsCount: Int?
     let sdM: Double?
     let inCache: Bool
+    let source: String   // "learned" | "corpus" | "skip"
     let snapLat: Double?
     let snapLon: Double?
     let snapDistM: Int?
@@ -29,6 +30,7 @@ struct BerthSummary: Identifiable, Decodable {
         case obsCount   = "obs_count"
         case sdM        = "sd_m"
         case inCache    = "in_cache"
+        case source
         case snapLat    = "snap_lat"
         case snapLon    = "snap_lon"
         case snapDistM  = "snap_dist_m"
@@ -58,19 +60,19 @@ struct BerthMapScreen: View {
     @State private var selected: BerthSummary?
     @State private var isLoading = true
 
-    private var learnedCount: Int  { berths.filter {  $0.inCache }.count }
-    private var unlearnedCount: Int { berths.filter { !$0.inCache && $0.lat != nil }.count }
+    private var learnedCount: Int  { berths.filter { $0.source == "learned" }.count }
+    private var corpusCount: Int   { berths.filter { $0.source == "corpus"  }.count }
+    private var skipCount: Int     { berths.filter { $0.source == "skip"    }.count }
 
     var body: some View {
         BerthMapbox(berths: berths, onSelect: { selected = $0 })
             .ignoresSafeArea()
             .overlay(alignment: .bottom) {
                 if !berths.isEmpty {
-                    HStack(spacing: 16) {
-                        Label("\(learnedCount) learned", systemImage: "circle.fill")
-                            .foregroundStyle(.blue)
-                        Label("\(unlearnedCount) suppressed", systemImage: "circle.fill")
-                            .foregroundStyle(.orange)
+                    HStack(spacing: 12) {
+                        Label("\(learnedCount)", systemImage: "circle.fill").foregroundStyle(.blue)
+                        Label("\(corpusCount)",  systemImage: "circle.fill").foregroundStyle(.black)
+                        Label("\(skipCount) skipped", systemImage: "circle.fill").foregroundStyle(.orange)
                     }
                     .font(.caption)
                     .padding(.horizontal, 12).padding(.vertical, 6)
@@ -186,25 +188,40 @@ struct BerthMapbox: UIViewRepresentable {
 
             for b in berths {
                 guard let lat = b.lat, let lon = b.lon else { continue }
+
+                // Centroid — small dot, colour by source
                 var a = CircleAnnotation(
                     id: b.id,
                     centerCoordinate: CLLocationCoordinate2D(latitude: lat, longitude: lon))
-                a.circleColor       = b.inCache
-                    ? StyleColor(UIColor(red: 0.2, green: 0.5, blue: 1.0, alpha: 0.85))
-                    : StyleColor(UIColor(red: 1.0, green: 0.5, blue: 0.1, alpha: 0.85))
-                a.circleRadius      = 5
-                a.circleStrokeColor = StyleColor(UIColor(white: 1.0, alpha: 0.5))
+                switch b.source {
+                case "learned":
+                    a.circleColor = StyleColor(UIColor(red: 0.2, green: 0.5, blue: 1.0, alpha: 0.7))
+                case "corpus":
+                    a.circleColor = StyleColor(UIColor(white: 0.0, alpha: 0.6))
+                default:
+                    a.circleColor = StyleColor(UIColor(red: 1.0, green: 0.5, blue: 0.1, alpha: 0.7))
+                }
+                a.circleRadius      = 3
+                a.circleStrokeColor = StyleColor(UIColor(white: 1.0, alpha: 0.4))
                 a.circleStrokeWidth = 1
                 circles.append(a)
                 annotationMap[b.id] = b
 
+                // Snap — large prominent dot + line from centroid
                 if let sLat = b.snapLat, let sLon = b.snapLon {
                     var s = CircleAnnotation(
                         id: "\(b.id):snap",
                         centerCoordinate: CLLocationCoordinate2D(latitude: sLat, longitude: sLon))
-                    s.circleColor       = StyleColor(UIColor(red: 0.1, green: 0.75, blue: 0.3, alpha: 0.9))
-                    s.circleRadius      = 3
-                    s.circleStrokeColor = StyleColor(UIColor(white: 1.0, alpha: 0.5))
+                    switch b.source {
+                    case "learned":
+                        s.circleColor = StyleColor(UIColor(red: 0.1, green: 0.75, blue: 0.3, alpha: 0.9))
+                    case "corpus":
+                        s.circleColor = StyleColor(UIColor(white: 0.2, alpha: 0.8))
+                    default:
+                        s.circleColor = StyleColor(UIColor(red: 1.0, green: 0.5, blue: 0.1, alpha: 0.9))
+                    }
+                    s.circleRadius      = 5
+                    s.circleStrokeColor = StyleColor(UIColor(white: 1.0, alpha: 0.6))
                     s.circleStrokeWidth = 1
                     snaps.append(s)
 
@@ -212,7 +229,7 @@ struct BerthMapbox: UIViewRepresentable {
                         CLLocationCoordinate2D(latitude: lat,  longitude: lon),
                         CLLocationCoordinate2D(latitude: sLat, longitude: sLon),
                     ])
-                    line.lineColor = StyleColor(UIColor(white: 0.4, alpha: 0.5))
+                    line.lineColor = StyleColor(UIColor(white: 0.4, alpha: 0.4))
                     line.lineWidth = 1
                     lines.append(line)
                 }

@@ -97,9 +97,34 @@ _snap_log_lock = threading.Lock()
 # Prevents concurrent reconnection attempts from on_disconnected and the watchdog
 _reconnect_lock = threading.Lock()
 
+def _build_learned_snap_cache(lookup):
+    """Pre-compute snap positions for learned berths and build corpus list from cache only.
+    Called synchronously at startup — no network calls."""
+    global _berth_snap_cache, _corpus_berth_list
+    snaps = {}
+    if _learner:
+        rows = _learner._db.execute(
+            "SELECT area_id, berth_id, lat, lon FROM berth_coords WHERE lat IS NOT NULL"
+        ).fetchall()
+        for area, berth, lat, lon in rows:
+            nl, nn, nd = snap_to_rail.nearest(lat, lon)
+            if math.isfinite(nd):
+                snaps[(area, berth)] = (nl, nn, round(nd * 1000))
+    _berth_snap_cache = snaps
+    print(f"[INIT]  Learned berth snap cache: {len(snaps)} entries")
+
+    # Build corpus list using only already-cached coordinates (no Overpass calls)
+    corpus = []
+    for area, berth, lat, lon in lookup.all_corpus_berths_cached():
+        corpus.append((area, berth, lat, lon))
+    _corpus_berth_list = corpus
+    print(f"[INIT]  Corpus berth list (cached coords only): {len(corpus)} entries")
+
+
 def _seed_corpus_snap_log(lookup):
     """Pre-populate snap log with corpus berths that have large snap corrections."""
     candidates = []
+
     for area, berth, lat, lon in lookup.all_corpus_berths():
         if lat is None or lon is None:
             continue
@@ -124,10 +149,14 @@ def _seed_corpus_snap_log(lookup):
             })
     print(f"[INIT]  Seeded snap log with {min(len(candidates), 60)} corpus berths "
           f"(worst snap: {candidates[0][0]*1000:.0f}m)" if candidates else "[INIT]  No corpus snap candidates")
+    print(f"[INIT]  Corpus snap cache: {len(snaps)} entries")
 
 _last_message_time = time.time()   # updated on every STOMP message received
 WATCHDOG_TIMEOUT = 120             # reconnect if silent for this many seconds
 _learner: "BerthLearner | None" = None  # set in main()
+_lookup: "BerthLookup | None" = None   # set in main()
+_berth_snap_cache: "dict | None" = None    # (area, berth) -> (snap_lat, snap_lon, snap_dist_m); built at startup
+_corpus_berth_list: "list | None" = None   # [(area, berth, lat, lon)] pre-built at startup from cache only
 
 
 def _inc(key: str, n: int = 1):
@@ -318,18 +347,19 @@ class Handler(BaseHTTPRequestHandler):
         in_cache   = set(_learner._cache.keys())
         learned    = {(r[0], r[1]) for r in rows}
         result = []
+
+        cache = _berth_snap_cache or {}
+
         for r in rows:
             lat, lon = r[2], r[3]
-            snap_lat = snap_lon = snap_dist_m = None
-            if lat is not None and lon is not None:
-                sl, sn, sd = snap_to_rail.nearest(lat, lon)
-                if math.isfinite(sd):
-                    snap_lat, snap_lon, snap_dist_m = sl, sn, round(sd * 1000)
+            snap = cache.get((r[0], r[1]))
+            sl, sn, sd = snap if snap else (None, None, None)
             result.append({
                 "area": r[0], "berth": r[1], "lat": lat, "lon": lon,
                 "obs_count": r[4], "sd_m": round(r[5]) if r[5] else None,
                 "in_cache": (r[0], r[1]) in in_cache,
-                "snap_lat": snap_lat, "snap_lon": snap_lon, "snap_dist_m": snap_dist_m,
+                "source": "learned",
+                "snap_lat": sl, "snap_lon": sn, "snap_dist_m": sd,
                 "skip_count": None, "skip_reason": None,
             })
         for (area, berth), entry in _learner._skips.items():
@@ -337,9 +367,22 @@ class Handler(BaseHTTPRequestHandler):
                 result.append({
                     "area": area, "berth": berth, "lat": None, "lon": None,
                     "obs_count": None, "sd_m": None, "in_cache": False,
+                    "source": "skip",
                     "snap_lat": None, "snap_lon": None, "snap_dist_m": None,
                     "skip_count": entry["count"], "skip_reason": entry.get("reason"),
                 })
+        if _corpus_berth_list is not None:
+            for area, berth, lat, lon in _corpus_berth_list:
+                if (area, berth) not in learned:
+                    snap = _berth_snap_cache.get((area, berth))
+                    sl, sn, sd = snap if snap else (None, None, None)
+                    result.append({
+                        "area": area, "berth": berth, "lat": lat, "lon": lon,
+                        "obs_count": None, "sd_m": None, "in_cache": False,
+                        "source": "corpus",
+                        "snap_lat": sl, "snap_lon": sn, "snap_dist_m": sd,
+                        "skip_count": None, "skip_reason": None,
+                    })
         self._json(result)
 
     def _rebuild_positions(self):
@@ -604,11 +647,15 @@ def main():
         raise SystemExit("Set NR_USERNAME and NR_PASSWORD before running.")
 
     print("[INIT] Loading SMART + CORPUS data …")
-    lookup = BerthLookup()
+    global _lookup
+    _lookup = BerthLookup()
+    lookup = _lookup
     print("[INIT] Loading berth learner …")
     _learner = BerthLearner()
     print("[INIT] Loading Highland rail geometry …")
     snap_to_rail.load()
+    print("[INIT] Pre-computing learned berth snaps …")
+    _build_learned_snap_cache(lookup)
     print("[INIT] Ready.\n")
 
     executor = ThreadPoolExecutor(max_workers=LOOKUP_WORKERS, thread_name_prefix="lookup")
