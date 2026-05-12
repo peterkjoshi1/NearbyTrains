@@ -154,6 +154,9 @@ struct DebugView: View {
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {
                     HStack {
+                        NavigationLink { BerthMapScreen() } label: {
+                            Image(systemName: "map")
+                        }
                         Button {
                             Task { await service.rebuildPositions() }
                         } label: {
@@ -253,12 +256,13 @@ struct DebugView: View {
 
     @ViewBuilder
     private var skipLogSection: some View {
-        Section("Unresolved berths — \(service.skipLog.count) (≥3 skips)") {
-            if service.skipLog.isEmpty {
+        let unlearned = service.skipLog.filter { !$0.inCache }
+        return Section("Unresolved berths — \(unlearned.count) unlearned (≥3 skips)") {
+            if unlearned.isEmpty {
                 Text("None yet")
                     .foregroundStyle(.secondary).font(.subheadline)
             } else {
-                ForEach(service.skipLog) { entry in
+                ForEach(unlearned) { entry in
                     SkipRow(entry: entry)
                 }
             }

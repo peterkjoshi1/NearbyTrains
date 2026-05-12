@@ -116,6 +116,30 @@ def snap(lat: float, lon: float) -> tuple[float, float, float]:
     return best_lat, best_lon, best_dist
 
 
+def nearest(lat: float, lon: float) -> tuple[float, float, float]:
+    """Like snap() but always returns the nearest point regardless of MIN_SNAP_KM.
+
+    Returns (nearest_lat, nearest_lon, distance_km), or (lat, lon, inf) if no
+    rail exists within MAX_SNAP_KM.
+    """
+    if not _polylines:
+        return lat, lon, math.inf
+
+    best_lat, best_lon, best_dist = lat, lon, math.inf
+
+    for polyline in _polylines:
+        for i in range(len(polyline) - 1):
+            a_lat, a_lon = polyline[i]
+            b_lat, b_lon = polyline[i + 1]
+            s_lat, s_lon = _nearest_on_segment(lat, lon, a_lat, a_lon, b_lat, b_lon)
+            d = _haversine_km(lat, lon, s_lat, s_lon)
+            if d < best_dist:
+                best_dist = d
+                best_lat, best_lon = s_lat, s_lon
+
+    return best_lat, best_lon, best_dist
+
+
 def _nearest_on_segment(
     px: float, py: float,
     ax: float, ay: float,

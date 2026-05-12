@@ -261,6 +261,8 @@ class Handler(BaseHTTPRequestHandler):
             self._snap_log()
         elif parsed.path == "/trains/skip_log":
             self._skip_log()
+        elif parsed.path == "/trains/berths":
+            self._berths()
         elif parsed.path == "/trains/berth_observations":
             self._berth_observations(parsed.query)
         elif parsed.path == "/trains/rebuild_positions":
@@ -305,6 +307,40 @@ class Handler(BaseHTTPRequestHandler):
 
     def _skip_log(self):
         self._json(_learner.skip_list() if _learner else [])
+
+    def _berths(self):
+        if not _learner:
+            self._json([])
+            return
+        rows = _learner._db.execute(
+            "SELECT area_id, berth_id, lat, lon, obs_count, sd_m FROM berth_coords"
+        ).fetchall()
+        in_cache   = set(_learner._cache.keys())
+        learned    = {(r[0], r[1]) for r in rows}
+        result = []
+        for r in rows:
+            lat, lon = r[2], r[3]
+            snap_lat = snap_lon = snap_dist_m = None
+            if lat is not None and lon is not None:
+                sl, sn, sd = snap_to_rail.nearest(lat, lon)
+                if math.isfinite(sd):
+                    snap_lat, snap_lon, snap_dist_m = sl, sn, round(sd * 1000)
+            result.append({
+                "area": r[0], "berth": r[1], "lat": lat, "lon": lon,
+                "obs_count": r[4], "sd_m": round(r[5]) if r[5] else None,
+                "in_cache": (r[0], r[1]) in in_cache,
+                "snap_lat": snap_lat, "snap_lon": snap_lon, "snap_dist_m": snap_dist_m,
+                "skip_count": None, "skip_reason": None,
+            })
+        for (area, berth), entry in _learner._skips.items():
+            if (area, berth) not in learned and entry.get("count", 0) >= 3:
+                result.append({
+                    "area": area, "berth": berth, "lat": None, "lon": None,
+                    "obs_count": None, "sd_m": None, "in_cache": False,
+                    "snap_lat": None, "snap_lon": None, "snap_dist_m": None,
+                    "skip_count": entry["count"], "skip_reason": entry.get("reason"),
+                })
+        self._json(result)
 
     def _rebuild_positions(self):
         self._json(_learner.rebuild_positions() if _learner else {"error": "learner not ready"})
