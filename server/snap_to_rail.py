@@ -16,7 +16,7 @@ import urllib.parse
 import urllib.request
 
 CACHE_FILE = pathlib.Path(__file__).parent / "highland_rail.json"
-MAX_SNAP_KM = 2.0   # ignore snap if nearest rail is further than this
+MAX_SNAP_KM = 8.0   # ignore snap if nearest rail is further than this
 MIN_SNAP_KM = 0.15  # ignore snap if already within this distance (avoids wrong parallel-track selection)
 
 # Bounding box: covers all Scottish railway lines tracked by this server —
