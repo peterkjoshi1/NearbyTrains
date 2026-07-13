@@ -16,10 +16,6 @@
 	<string>$(CURRENT_PROJECT_VERSION)</string>
 	<key>MBXAccessToken</key>
 	<string>$(MAPBOX_TOKEN)</string>
-	<key>RTTRefreshToken</key>
-	<string>$(RTT_REFRESH_TOKEN)</string>
-	<key>NSLocationWhenInUseUsageDescription</key>
-	<string>NearbyTrains uses your location to find National Rail stations nearby.</string>
 	<key>NSAppTransportSecurity</key>
 	<dict>
 		<key>NSAllowsLocalNetworking</key>
@@ -33,6 +29,10 @@
 			</dict>
 		</dict>
 	</dict>
+	<key>NSLocationWhenInUseUsageDescription</key>
+	<string>NearbyTrains uses your location to find National Rail stations nearby.</string>
+	<key>RTTRefreshToken</key>
+	<string>$(RTT_REFRESH_TOKEN)</string>
 	<key>UIApplicationSceneManifest</key>
 	<dict>
 		<key>UIApplicationSupportsMultipleScenes</key>
@@ -42,18 +42,12 @@
 	<true/>
 	<key>UILaunchScreen</key>
 	<dict/>
-	<key>UISupportedInterfaceOrientations~ipad</key>
+	<key>UISupportedInterfaceOrientations</key>
 	<array>
+		<string>UIInterfaceOrientationLandscapeLeft</string>
+		<string>UIInterfaceOrientationLandscapeRight</string>
 		<string>UIInterfaceOrientationPortrait</string>
 		<string>UIInterfaceOrientationPortraitUpsideDown</string>
-		<string>UIInterfaceOrientationLandscapeLeft</string>
-		<string>UIInterfaceOrientationLandscapeRight</string>
-	</array>
-	<key>UISupportedInterfaceOrientations~iphone</key>
-	<array>
-		<string>UIInterfaceOrientationPortrait</string>
-		<string>UIInterfaceOrientationLandscapeLeft</string>
-		<string>UIInterfaceOrientationLandscapeRight</string>
 	</array>
 </dict>
 </plist>
